@@ -607,37 +607,37 @@
 
     ctx.save();
     if (effect === 0) {
-      // wireframe: the shell's own idiom at 2.4x, so the backdrop reads as the room
-      // continuing behind the head
-      const rx = Math.max(VW, VH) * 0.62, ry = Math.max(VW, VH) * 0.48;
+      // wireframe room: a receding perspective floor rather than a dome around the head.
+      // Concentric rings at screen scale read as horizontal bands; a grid with a horizon
+      // reads as a room the head is standing in, which is what "the background is the
+      // same effect" has to mean once the effect is a mesh.
+      const horizon = VH * 0.72;
       ctx.strokeStyle = rgba(COL.main, 0.13 * level * glow);
       ctx.lineWidth = 1;
-      for (let i = 1; i <= 7; i++) {                 // latitude rings
+      const cols = 26;
+      for (let k = -cols; k <= cols; k++) {          // verticals fanning toward the horizon
         ctx.beginPath();
-        ctx.ellipse(cx, cy, rx * (i / 7), ry * (i / 7), 0, 0, TAU);
+        ctx.moveTo(VW * 0.5 + k * (VW * 0.012), horizon);
+        ctx.lineTo(VW * 0.5 + k * (VW * 0.115), VH);
         ctx.stroke();
       }
-      for (let j = 1; j <= 4; j++) {                // longitude arcs: the dome, not bands
-        const k = j / 5;
+      const scroll = (t * 0.22) % 1;                 // rows crawl toward the viewer
+      for (let i = 0; i <= 22; i++) {
+        const q = ((i + scroll) / 22);
+        const y = horizon + Math.pow(q, 2.35) * (VH - horizon);
+        ctx.globalAlpha = clamp(1 - q * 0.85, 0.15, 1);
         ctx.beginPath();
-        ctx.ellipse(cx, cy, rx * Math.max(0.04, Math.abs(Math.cos(k * Math.PI))), ry * 0.98, 0, 0, TAU);
+        ctx.moveTo(0, y);
+        ctx.lineTo(VW, y);
         ctx.stroke();
       }
-      ctx.strokeStyle = rgba(COL.main, 0.075 * level * glow);
-      for (let k = 0; k < 16; k++) {                // spokes
-        const a = (k / 16) * TAU + t * 0.008;
-        ctx.beginPath();
-        ctx.moveTo(cx + Math.cos(a) * rx * 0.16, cy + Math.sin(a) * ry * 0.16);
-        ctx.lineTo(cx + Math.cos(a) * rx, cy + Math.sin(a) * ry);
-        ctx.stroke();
-      }
-      const sk = (t * 0.05) % 1;
+      ctx.globalAlpha = 1;
       ctx.globalCompositeOperation = 'lighter';
-      const sg = ctx.createRadialGradient(cx, cy + (sk - 0.5) * ry * 2, 0, cx, cy + (sk - 0.5) * ry * 2, rx * 0.5);
-      sg.addColorStop(0, rgba(COL.main, 0.05 * level * glow));
-      sg.addColorStop(1, rgba(COL.main, 0));
-      ctx.fillStyle = sg;
-      ctx.fillRect(0, 0, VW, VH);
+      const hz = ctx.createLinearGradient(0, horizon - VH * 0.06, 0, horizon + VH * 0.02);
+      hz.addColorStop(0, rgba(COL.main, 0));
+      hz.addColorStop(1, rgba(COL.core, 0.10 * level * glow));
+      ctx.fillStyle = hz;
+      ctx.fillRect(0, horizon - VH * 0.06, VW, VH * 0.08);
     } else if (effect === 1) {
       // particles: the same motes, spread over the room
       ctx.globalCompositeOperation = 'lighter';
