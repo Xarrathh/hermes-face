@@ -620,7 +620,7 @@
       // middle of the face)
       const band = (v) => {
         const t = clamp((v - top) / (vEnd - top), 0, 1);
-        const base = (style === 5 ? 0.24 : style === 4 ? 0.21 : 0.19) - 0.07 * Math.sin(Math.PI * t);
+        const base = (style === 5 ? 0.31 : style === 4 ? 0.27 : 0.24) - 0.07 * Math.sin(Math.PI * t);
         const wave = curly ? 0.022 * Math.sin(t * Math.PI * 7) : 0;
         return clamp(base + wave, 0.08, 0.34);
       };
@@ -641,7 +641,7 @@
       p.closePath();
 
       const g = ctx.createLinearGradient(ux(sgn * outer(top)), 0, ux(sgn * inner(top)), 0);
-      g.addColorStop(0, `rgba(9,40,52,${0.20 * hair})`);
+      g.addColorStop(0, `rgba(10,46,60,${0.30 * hair})`);
       g.addColorStop(1, 'rgba(4,18,24,0)');
       ctx.fillStyle = g;
       ctx.fill(p);
@@ -653,7 +653,7 @@
       for (let k = 1; k <= 6; k++) {
         const f = k / 7;
         const wob = curly ? 0.006 * Math.sin(k * 2.1) : 0;
-        ctx.strokeStyle = rgba(COL.main, (0.30 - 0.03 * k) * hair);
+        ctx.strokeStyle = rgba(COL.main, (0.34 - 0.03 * k) * hair);
         ctx.beginPath();
         for (let i = 0; i <= N; i++) {
           const v = top + (vEnd - top) * (i / N);
@@ -712,13 +712,34 @@
     // A faint tint only: a solid fill swallowed the mesh and the scan band, which
     // is the whole hologram. The hair is read from its strands, not its mass.
     const g = ctx.createLinearGradient(0, vy(-0.02), 0, vy(hv + 0.04));
-    g.addColorStop(0, `rgba(9,40,52,${0.10 * density})`);
-    g.addColorStop(0.8, `rgba(6,26,34,${0.07 * density})`);
+    g.addColorStop(0, `rgba(10,44,57,${0.19 * density})`);
+    g.addColorStop(0.8, `rgba(7,30,39,${0.14 * density})`);
     g.addColorStop(1, 'rgba(4,16,20,0)');
     ctx.fillStyle = g;
     ctx.fillRect(ux(-1.1), vy(-0.1), dU(2.2), dV(hv + 0.16));
 
-    // no regular strand comb: the rain is the texture
+    // Strands, but not a comb: spacing, length, alpha and curvature all jitter, so the
+    // cap reads as hair instead of a barcode. Deterministic, so it does not crawl.
+    const hash = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+    // Strands run crown to hairline and fan outward, the way hair actually sits: they
+    // all start near the same point but with different lengths, bends and alphas, so the
+    // cap has direction without ever forming a comb.
+    const N = Math.round(26 + 34 * hair);
+    for (let i = 0; i < N; i++) {
+      const h1 = hash(i + 1), h2 = hash(i + 91.3), h3 = hash(i + 17.7);
+      const u = lerp(-hwH * 0.97, hwH * 0.97, (i + 0.6 * h2) / N);
+      const vTop = -0.030 + 0.050 * h1;                    // near the crown
+      const vEnd = hv - 0.004 - 0.028 * h3;                // at the hairline
+      const spread = 0.30 + 0.16 * h3;
+      ctx.strokeStyle = rgba(COL.main, (0.09 + 0.15 * h3) * hair);
+      ctx.lineWidth = 0.7 + 0.8 * h2;
+      ctx.beginPath();
+      ctx.moveTo(ux(u * spread * 0.55), vy(vTop));
+      ctx.bezierCurveTo(ux(u * (spread * 0.72 + 0.05 * (h1 - 0.5))), vy(lerp(vTop, vEnd, 0.45)),
+                        ux(u * (0.94 + 0.07 * (h2 - 0.5))), vy(lerp(vTop, vEnd, 0.80)),
+                        ux(u), vy(vEnd));
+      ctx.stroke();
+    }
     ctx.restore();
 
     // shadow on the forehead: clipping the cap shifted down makes its edge follow
@@ -734,18 +755,20 @@
     ctx.fillRect(ux(-1.1), vy(hv - 0.02), dU(2.2), dV(0.10));
     ctx.restore();
 
-    // fringe: short strokes that cross the hairline so the edge is not a band
+    // fringe: uneven strokes crossing the hairline so the edge is not a band
     ctx.save();
     ctx.clip(cap);
-    for (let i = -9; i <= 9; i++) {
-      const u = i / 9.6;
-      const x = ux(u * hwH * 0.96);
-      const drop = (0.030 + 0.022 * Math.cos(u * Math.PI * 0.9)) * (0.5 + 0.5 * hair);
-      ctx.strokeStyle = rgba(COL.main, 0.14 * hair);
-      ctx.lineWidth = 1.1;
+    const fh = (n) => { const x = Math.sin(n * 311.7 + 127.1) * 24634.6345; return x - Math.floor(x); };
+    for (let i = 0; i < 34; i++) {
+      const h1 = fh(i + 3), h2 = fh(i + 44.9);
+      const u = lerp(-0.99, 0.99, (i + h2 * 0.8) / 34);
+      const x = ux(u * hwH * (0.93 + 0.05 * h1));
+      const drop = (0.020 + 0.048 * h1) * (0.55 + 0.45 * hair);
+      ctx.strokeStyle = rgba(COL.main, (0.08 + 0.13 * h2) * hair);
+      ctx.lineWidth = 0.8 + 0.6 * h1;
       ctx.beginPath();
-      ctx.moveTo(x, vy(hv - 0.012));
-      ctx.quadraticCurveTo(x * 1.004, vy(hv + drop * 0.6), x * 0.996, vy(hv + drop));
+      ctx.moveTo(x, vy(hv - 0.016));
+      ctx.quadraticCurveTo(x * 1.006, vy(hv + drop * 0.6), x * 0.994, vy(hv + drop));
       ctx.stroke();
     }
     ctx.restore();

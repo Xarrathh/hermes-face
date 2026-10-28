@@ -127,6 +127,24 @@ def load_config() -> dict:
     return {"params": merged, "voice": voice}
 
 
+def custom_presets(cfg: dict) -> dict:
+    raw = cfg.get("presets")
+    if not isinstance(raw, dict):
+        return {}
+    out = {}
+    for name, over in raw.items():
+        if not isinstance(over, dict):
+            continue
+        clean = {}
+        for k, v in over.items():
+            if k in PARAM_SPEC:
+                cv = coerce(k, v)
+                if cv is not None:
+                    clean[k] = cv
+        out[str(name)[:40]] = clean
+    return out
+
+
 def save_config(cfg: dict) -> None:
     CONFIG.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
 
@@ -312,6 +330,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(load_config()["params"])
         if path == "/config":
             return self._json(load_config())
+        if path == "/presets":
+            cfg = load_config()
+            return self._json({"builtin": SCHEMA_DATA.get("presets", {}),
+                                "custom": custom_presets(cfg)})
         if path == "/voices":
             return self._json({"voices": VOICES, "current": load_config()["voice"]})
         if path == "/state":
@@ -363,6 +385,28 @@ class Handler(BaseHTTPRequestHandler):
                 save_config(cfg)
             return self._json({"ok": True, "params": cfg["params"],
                                "voice": cfg["voice"], "rev": config_rev()})
+
+        if path == "/presets":
+            cfg = load_config()
+            name = str(payload.get("name") or "").strip()[:40]
+            if not name:
+                return self._json({"error": "name required"}, 400)
+            store = cfg.get("presets")
+            if not isinstance(store, dict):
+                store = {}
+            if payload.get("delete"):
+                store.pop(name, None)
+            else:
+                # save exactly what the face is showing, clamped to the schema
+                saved = {}
+                for k, v in cfg["params"].items():
+                    cv = coerce(k, v)
+                    if cv is not None:
+                        saved[k] = cv
+                store[name] = saved
+            cfg["presets"] = store
+            save_config(cfg)
+            return self._json({"ok": True, "custom": custom_presets(cfg)})
 
         if path == "/voice-test":
             sample = str(payload.get("text") or "This is how I sound. Say the word and I will change it.")

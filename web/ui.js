@@ -58,7 +58,7 @@
     return Number(v).toFixed(dec);
   }
 
-  function buildEditor() {
+  async function buildEditor() {
     const host = $('#paramGroups');
     host.innerHTML = '';
     for (const g of schema.groups) {
@@ -117,14 +117,14 @@
         host.appendChild(row);
       }
     }
-    // presets
-    const ph = $('#presets');
-    ph.innerHTML = '';
-    for (const name of Object.keys(schema.presets || {})) {
-      const b = document.createElement('button');
-      b.textContent = name;
-      b.addEventListener('click', () => applyPreset(name));
-      ph.appendChild(b);
+    // presets: built in from the schema, plus whatever Pierre has saved
+    await loadPresets();
+    const saveBtn = $('#presetSave');
+    if (saveBtn && !saveBtn.dataset.wired) {
+      saveBtn.dataset.wired = '1';
+      saveBtn.addEventListener('click', savePreset);
+      const nameInput = $('#presetName');
+      if (nameInput) nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') savePreset(); });
     }
     syncInputs();
     applyEffectGate();
@@ -151,9 +151,69 @@
     return d;
   }
 
+  let PRESETS = { builtin: {}, custom: {} };
+
+  async function loadPresets() {
+    try {
+      const r = await fetch('/presets', { cache: 'no-store' });
+      if (r.ok) PRESETS = await r.json();
+    } catch (e) { /* keep whatever we had */ }
+    renderPresets();
+  }
+
+  function renderPresets() {
+    const ph = $('#presets');
+    if (!ph) return;
+    ph.innerHTML = '';
+    const add = (name, custom) => {
+      const wrap = document.createElement('span');
+      wrap.className = 'chip' + (custom ? ' mine' : '');
+      const b = document.createElement('button');
+      b.textContent = name;
+      b.addEventListener('click', () => applyPreset(name));
+      wrap.appendChild(b);
+      if (custom) {
+        const x = document.createElement('button');
+        x.className = 'x';
+        x.textContent = '\u00d7';
+        x.title = 'Delete this preset';
+        x.addEventListener('click', async ev => {
+          ev.stopPropagation();
+          await fetch('/presets', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, delete: true }),
+          });
+          loadPresets();
+        });
+        wrap.appendChild(x);
+      }
+      ph.appendChild(wrap);
+    };
+    for (const name of Object.keys(PRESETS.builtin || {})) add(name, false);
+    for (const name of Object.keys(PRESETS.custom || {})) add(name, true);
+  }
+
+  async function savePreset() {
+    const input = $('#presetName');
+    const name = (input && input.value || '').trim();
+    if (!name) { if (input) input.focus(); return; }
+    const r = await fetch('/presets', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    if (r.ok) {
+      const j = await r.json();
+      PRESETS.custom = j.custom || {};
+      if (input) input.value = '';
+      renderPresets();
+      saveState.textContent = 'preset saved: ' + name;
+      setTimeout(() => { saveState.textContent = 'saved'; }, 2200);
+    }
+  }
+
   function applyPreset(name) {
     const base = defaults();
-    const over = (schema.presets || {})[name] || {};
+    const over = Object.assign({}, (PRESETS.builtin || {})[name] || {}, (PRESETS.custom || {})[name] || {});
     P = Object.assign(base, over);
     api().setParams(P);
     syncInputs();

@@ -132,6 +132,27 @@
     background: #9df0ff; box-shadow: 0 0 8px rgba(110, 230, 255, 0.8); cursor: pointer;
   }
   .presets { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
+  .chip { display: inline-flex; align-items: stretch; }
+  .chip button { border-radius: 999px; }
+  .chip.mine > button:first-child { border-color: rgba(120, 230, 250, 0.55); color: #dffbff; }
+  .chip .x {
+    margin-left: -6px; padding: 0 7px; border-radius: 0 999px 999px 0;
+    border-left: none; font-size: 12px; line-height: 1; opacity: 0.75;
+  }
+  .chip .x:hover { opacity: 1; color: #ff9db4; }
+  .savepreset { display: flex; gap: 6px; margin: 2px 0 10px; }
+  .savepreset input {
+    flex: 1; min-width: 0; background: rgba(8, 26, 32, 0.9); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 999px; padding: 5px 10px;
+    font: inherit; font-size: 11px; letter-spacing: 0.04em;
+  }
+  .savepreset input::placeholder { color: rgba(150, 210, 225, 0.4); }
+  .savepreset button { padding: 5px 10px; border-radius: 999px; }
+  .savepreset input, .savepreset button {
+    border: 1px solid var(--line); background: transparent; color: var(--dim);
+    font-size: 11px; letter-spacing: 0.04em; cursor: pointer;
+  }
+  .savepreset button:hover { border-color: rgba(120, 230, 250, 0.6); color: #d8fbff; }
   .presets button, .actions button, #voice {
     background: rgba(12, 40, 50, 0.6); color: rgba(180, 240, 252, 0.82);
     border: 1px solid rgba(80, 190, 210, 0.25); border-radius: 3px;
@@ -175,6 +196,10 @@
     <h1>Face</h1>
     <div class="sub">everything here is saved to config.json</div>
     <div class="presets" id="presets"></div>
+    <div class="savepreset">
+      <input id="presetName" placeholder="name this look" maxlength="24" spellcheck="false">
+      <button id="presetSave" title="Save the current look as a preset">Save current</button>
+    </div>
     <div id="paramGroups"></div>
     <h2>Voice</h2>
     <select id="voice"></select>
