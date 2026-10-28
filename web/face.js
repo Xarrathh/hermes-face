@@ -368,33 +368,24 @@
         y: rnd(-VH, VH),
         sp: rnd(55, 170),
         b: rnd(0.35, 1),
-        dx: rnd(-16, 16),
         cell: -1,
       });
     }
     RAIN.ready = true;
   }
 
-  function rainStep(dt, speed, effect) {
+  function rainStep(dt, speed) {
     if (!RAIN.ready) return;
-    const drift = effect === 5;
     const c = RAIN.c;
     // fade what is already there: this is what turns glyphs into trails
     c.globalCompositeOperation = 'destination-out';
-    c.fillStyle = 'rgba(0,0,0,0.050)';
+    c.fillStyle = 'rgba(0,0,0,0.011)';
     c.fillRect(0, 0, RAIN.w, RAIN.h);
     c.globalCompositeOperation = 'source-over';
 
     const gw = RAIN.glyphW, gh = RAIN.glyphH;
     for (const col of RAIN.cols) {
       col.y += col.sp * speed * dt;
-      if (drift) {
-        // Matrix drift: columns wander sideways as they fall
-        col.x += col.dx * speed * dt;
-        if (col.x < -gw) col.x = RAIN.w;
-        else if (col.x > RAIN.w) col.x = -gw;
-        if (Math.random() < 0.002) col.dx = rnd(-22, 22);
-      }
       if (col.y > RAIN.h + gh) {
         col.y = -rnd(40, VH * 0.9);
         col.sp = rnd(55, 170);       // px per second
@@ -524,7 +515,7 @@
     // the room carries the same code when code is the effect; otherwise it stays dim
     const rain = P.rain ?? 0.32;
     const eff = Math.round(P.effect ?? 0);
-    if (eff === 0 || eff === 4 || eff === 5) {
+    if (eff === 0 || eff === 4) {
       if (eff === 4) {
         // distant rain: the same buffer, smaller and dimmer
         ctx.save();
@@ -926,10 +917,10 @@
     if (RAIN.ready) {
       // transparency * faceRain = how much code the face carries; whole passes stack,
       // so the top of the slider is genuinely brighter instead of clamping at 1
-      const effect = clamp(Math.round(P.effect ?? 0), 0, 5);
+      const effect = clamp(Math.round(P.effect ?? 0), 0, 4);
       if (effect === 1) drawWire(hp, t);
       else if (effect === 2) drawMotes(hp, t);
-      const fr = (effect === 0 || effect === 4 || effect === 5) ? Math.max(0, P.faceRain ?? 2.6) : 0;
+      const fr = (effect === 0 || effect === 4) ? Math.max(0, P.faceRain ?? 2.6) : 0;
       if (fr > 0.02) {
         // Source-over, so the code keeps its hue at full strength. Additive stacking
         // is what turned the face white: six passes of any colour clip to white.
@@ -1517,7 +1508,7 @@
     const t = S.t;
 
     updateSenses(dt, t);
-    rainStep(dt, (P.rainSpeed ?? 1), Math.round(P.effect ?? 0));
+    rainStep(dt, (P.rainSpeed ?? 1));
 
     drawBackdrop(t);
 
