@@ -171,7 +171,7 @@
     blink: 0, blinkPhase: 0, nextBlink: 2.4, doubleBlink: 0, blinks: 0,
     gazeX: 0, gazeY: 0, tgx: 0, tgy: 0, nextSaccade: 2.0,
     browL: 0, browR: 0, browTL: 0, browTR: 0, nextBrow: 2.2, flash: 0, nextFlash: 6,
-    nostril: 0, nextNostril: 3, earL: 0, earR: 0, nextEar: 4, earSign: 1,
+    nostril: 0, nextNostril: 3, earL: 0, earR: 0, nextEar: 4, earSide: 1, earQ: 0,
     aperture: 0,
     amp: 0,
     breath: 0,
@@ -234,16 +234,23 @@
     S.nostril = approach(S.nostril, nTarget * nf, 9, dt);
 
     // ears: a small independent twitch, one side at a time
-    const em = P.earMotion ?? 0.5;
+    // ears: one side, a quick lift and a second smaller tick 120 ms later, so it
+    // reads as a twitch rather than a slow drift
     S.nextEar -= dt;
-    if (S.nextEar <= 0) {
-      S.nextEar = rnd(2.2, 7.0);
-      S.earSign = Math.random() < 0.5 ? -1 : 1;
-      if (S.earSign > 0) S.earR = 1; else S.earL = 1;
+    if (S.earQ > 0) {
+      S.earQ -= dt;
+      if (S.earQ <= 0) {
+        if (S.earSide > 0) S.earR = Math.max(S.earR, 0.6); else S.earL = Math.max(S.earL, 0.6);
+      }
     }
-    S.earL = approach(S.earL, 0, 3.4, dt);
-    S.earR = approach(S.earR, 0, 3.4, dt);
-    S.earAmt = em;
+    if (S.nextEar <= 0) {
+      S.nextEar = rnd(2.0, 6.5);
+      S.earSide = Math.random() < 0.5 ? -1 : 1;
+      if (S.earSide > 0) S.earR = 1; else S.earL = 1;
+      S.earQ = rnd(0.10, 0.16);
+    }
+    S.earL = approach(S.earL, 0, 5.5, dt);
+    S.earR = approach(S.earR, 0, 5.5, dt);
 
     S.nextFlash -= dt;
     if (S.nextFlash <= 0) {
@@ -646,16 +653,20 @@
       const vTop = P.earY ?? 0.44;
       const size = P.earSize ?? 1.1;
       const out = P.earOut ?? 0.55;
-      const midV = vTop + 0.105 * size;
-      const hh = dV(0.108 * size);
-      const hw = dU(0.048 * size + 0.020 * out);
-      const x = ux(side * halfWidth(midV)) + side * dU(0.010 * out);
+      const midV = vTop + 0.095 * size;
+      const hh = dV(0.095 * size);
+      const hw = dU(0.040 * size + 0.014 * out);
+      const x = ux(side * halfWidth(midV)) + side * dU(0.004 + 0.008 * out);
       const cyE = vy(midV);
 
-      const tw = side < 0 ? S.earL : S.earR;
+      const amp = clamp(P.earMotion ?? 0.5, 0, 1);
+      const tw = (side < 0 ? S.earL : S.earR) * amp;
       ctx.save();
-      ctx.translate(x + side * dU(0.004) * tw, cyE - dV(0.006) * tw);
-      ctx.rotate(-((P.earTilt ?? 0.1) + 0.10 * tw * side));
+      // up on the twitch, with a whisker of outward travel and roll
+      ctx.translate(x + side * dU(0.016) * tw, cyE - dV(0.042) * tw);
+      ctx.rotate(-((P.earTilt ?? 0.1) + 0.20 * tw * side));
+      const es = 1 + 0.05 * tw;
+      ctx.scale(es, es);
       ctx.scale(side, 1);
 
       // shell
@@ -1379,9 +1390,9 @@
     ctx.translate(0, S.breath);
     if (!OFF.has('projector')) drawProjector(t);
     drawHairBehind();
-    drawEars();
     const hp = headPath();
     drawShell(t, hp);
+    drawEars();
 
     ctx.save();
     ctx.clip(hp);
