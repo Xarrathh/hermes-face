@@ -109,12 +109,34 @@
     [0.915, 0.170], [0.955, 0.245], [0.968, 0.320], [0.966, 0.395], [0.958, 0.462],
     [0.944, 0.525], [0.922, 0.585], [0.900, 0.640], [0.884, 0.692], [0.864, 0.744],
     [0.830, 0.796], [0.775, 0.844], [0.690, 0.888], [0.570, 0.928], [0.425, 0.960],
-    [0.255, 0.985], [0.100, 0.998], [0.000, 1.000],
+    [0.255, 0.985], [0.150, 0.996], [0.108, 1.000],
   ];
+  // The chin is a rounded arc, not a point. Ending the curve at u = 0 gave every
+  // face a tapered elf chin however narrow the jaw was set; chinWidth then had
+  // almost nothing left to widen. CHIN_U is the half width of the chin's bottom arc.
+  const CHIN_U = 0.108;
 
   const G = { pts: [], hw: new Float32Array(257) };
 
+  // Face *shape* is a separate axis from the single tuned silhouette: no combination of
+  // jaw/chin sliders turns the shared curve into a round or heart-shaped face, because
+  // the width profile between cheekbone and chin is fixed. Each family is a multiplier
+  // over v applied to that profile, so the params still bend it afterwards.
+  const SHAPES = {
+    oval:  () => 1,
+    // Both extremes overshoot if the multiplier is applied with the wrong sign of
+    // generosity: 0.11/-0.10 gave a square jaw, 0.09/-0.20 a pointed elf chin. The jaw
+    // corner lives in the base curve (v 0.69-0.79), so a shape can only *round* it.
+    round: (v) => 1 + 0.070 * Math.sin(Math.PI * clamp((v - 0.10) / 0.58, 0, 1))
+                    - 0.045 * smoothstep(0.74, 1.0, v),
+    heart: (v) => 1 + 0.065 * Math.sin(Math.PI * clamp((v - 0.06) / 0.44, 0, 1))
+                    - 0.105 * smoothstep(0.66, 0.98, v),
+    long:  (v) => 0.93 - 0.05 * smoothstep(0.45, 1.0, v) + 0.04 * smoothstep(0.35, 0.0, v),
+  };
+
   function rebuildGeometry() {
+    const SHAPE_ORDER = ['oval', 'round', 'heart', 'long'];
+    const shape = SHAPES[SHAPE_ORDER[clamp(Math.round(P.faceShape ?? 0), 0, SHAPE_ORDER.length - 1)]] ?? SHAPES.oval;
     const cran = P.cranium ?? 1;
     const cheek = P.cheekbone ?? 1;
     const jaw = P.jawWidth ?? 1;
@@ -131,7 +153,7 @@
       if (v >= 0.62) uu *= lerp(1, jaw, smoothstep(0.60, 0.735, v));
       if (v > 0.82) uu *= lerp(1, chin, smoothstep(0.82, 0.95, v));
       if (v > 0.66) vv = 0.66 + (v - 0.66) * chinLen;
-      return [uu, vv];
+      return [uu * shape(v), vv];
     });
     const vEnd = pts[pts.length - 1][1];
     pts = pts.map(([u, v]) => [u, v / vEnd]);
@@ -293,8 +315,9 @@
   function headPath() {
     const ring = [];
     for (const [u, v] of G.pts) ring.push([ux(u), vy(v) + jawDrop(v)]);
-    for (let i = G.pts.length - 2; i >= 1; i--) {
+    for (let i = G.pts.length - 1; i >= 1; i--) {
       const [u, v] = G.pts[i];
+      if (u === 0) continue;                       // a pointed crown must not duplicate
       ring.push([ux(-u), vy(v) + jawDrop(v)]);
     }
     const n = ring.length;
@@ -601,68 +624,82 @@
 
   // Hair that frames the face: a band along each side, kept inside the head
   // outline so nothing wraps around the skull.
+  // Drawn OUTSIDE the head clip, after the shell. A bob or long hair has to stand
+  // off the skull: anything clipped to the silhouette can only ever read as a
+  // contour line, which is why "Long" looked bald. Volume is a param, not a constant.
+  //
+  // The band starts AT the crown point and swells downward. Two earlier shapes failed
+  // for opposite reasons: a fixed 5 % offset over the forehead read as a swim cap, and
+  // a dome placed above the crown floated in front of a skull that comes to a point at
+  // v = 0. One closed path from crown to jaw, outer edge offset, inner edge hugging the
+  // bone, is the shape that reads as hair.
   function drawHairSides() {
     const style = hairStyle();
     const hair = P.hair ?? 0.85;
     if (hair < 0.02) return;
     if (style !== 4 && style !== 5 && style !== 8) return;
+    const vol = P.hairVolume ?? 1;
     const hv = P.hairline ?? 0.245;
-    const vEnd = style === 5 ? 0.995 : style === 4 ? 0.80 : 0.62;
+    const vEnd = style === 5 ? 1.16 : style === 4 ? 0.88 : 0.72;
     const curly = style === 8;
+    const mass = style === 5 ? 1.0 : style === 4 ? 0.80 : 0.86;
+    const hwAt = (v) => halfWidth(Math.min(v, 1)) * (v > 1 ? 1 + 0.42 * (v - 1) : 1);
 
     for (const sgn of [-1, 1]) {
-      const p = new Path2D();
-      const top = hv - 0.015;
-      const N = 18;
-      const outer = (v) => halfWidth(v) * 0.985;
-      // the band is a thin strip hugging the silhouette: inner is a fraction of the
-      // way IN from the edge, not a fraction of the half width (that put hair in the
-      // middle of the face)
-      const band = (v) => {
-        const t = clamp((v - top) / (vEnd - top), 0, 1);
-        const base = (style === 5 ? 0.31 : style === 4 ? 0.27 : 0.24) - 0.07 * Math.sin(Math.PI * t);
-        const wave = curly ? 0.022 * Math.sin(t * Math.PI * 7) : 0;
-        return clamp(base + wave, 0.08, 0.34);
+      const flare = (v) => {
+        const tt = clamp(v / vEnd, 0, 1);
+        const ramp = Math.sin(Math.min(1, tt * 1.15) * Math.PI * 0.5);
+        const wave = curly ? 0.045 * mass * vol * Math.sin(v * 44 + sgn * 1.7) : 0;
+        return Math.max(0, 0.28 * mass * vol * ramp + wave);
       };
-      const inner = (v) => halfWidth(v) * (1 - band(v));
-      p.moveTo(ux(sgn * outer(top)), vy(top));
+      const outer = (v) => hwAt(v) * (1 + flare(v));
+      const inner = (v) => {
+        const tt = clamp(v / vEnd, 0, 1);
+        // thin at the crown, full over the ears, and falling clear of the jaw
+        const band = (style === 5 ? 0.36 : style === 4 ? 0.32 : 0.30) * Math.pow(tt, 0.55);
+        const clear = style === 5 ? 0.34 * Math.pow(clamp((v - 0.80) / 0.34, 0, 1), 1.3) : 0;
+        return hwAt(v) * clamp(1 - band + clear, 0.30, 1.02);
+      };
+
+      const N = 26;
+      const p2 = new Path2D();
+      p2.moveTo(ux(0), vy(0));
       for (let i = 1; i <= N; i++) {
-        const v = top + (vEnd - top) * (i / N);
-        p.lineTo(ux(sgn * outer(v)), vy(v));
+        const v = vEnd * (i / N);
+        p2.lineTo(ux(sgn * outer(v)), vy(v));
       }
-      // rounded bottom
-      const vB = vEnd;
-      p.quadraticCurveTo(ux(sgn * (outer(vB) + inner(vB)) * 0.5), vy(vB + 0.045),
-                         ux(sgn * inner(vB)), vy(vB));
+      p2.quadraticCurveTo(ux(sgn * (outer(vEnd) + inner(vEnd)) * 0.5), vy(vEnd + 0.05),
+                          ux(sgn * inner(vEnd)), vy(vEnd));
       for (let i = N - 1; i >= 0; i--) {
-        const v = top + (vEnd - top) * (i / N);
-        p.lineTo(ux(sgn * inner(v)), vy(v));
+        const v = vEnd * (i / N);
+        p2.lineTo(ux(sgn * inner(v)), vy(v));
       }
-      p.closePath();
+      p2.closePath();
 
-      const g = ctx.createLinearGradient(ux(sgn * outer(top)), 0, ux(sgn * inner(top)), 0);
-      g.addColorStop(0, `rgba(10,46,60,${0.30 * hair})`);
-      g.addColorStop(1, 'rgba(4,18,24,0)');
+      // soft mass, never a solid fill: the shell's scan band has to read through it
+      const g = ctx.createLinearGradient(ux(sgn * outer(vEnd * 0.7)), 0, ux(sgn * inner(vEnd * 0.8)), 0);
+      g.addColorStop(0, `rgba(9,44,58,${0.46 * hair})`);
+      g.addColorStop(0.55, `rgba(6,30,40,${0.30 * hair})`);
+      g.addColorStop(1, 'rgba(3,14,20,0)');
       ctx.fillStyle = g;
-      ctx.fill(p);
+      ctx.fill(p2);
 
-      // strands follow the band
-      ctx.strokeStyle = rgba(COL.main, 0.38 * hair);
-      ctx.lineWidth = 1;
-      ctx.lineWidth = 1;
-      for (let k = 1; k <= 6; k++) {
-        const f = k / 7;
-        const wob = curly ? 0.006 * Math.sin(k * 2.1) : 0;
-        ctx.strokeStyle = rgba(COL.main, (0.34 - 0.03 * k) * hair);
+      // strands following the band, jittered from a deterministic hash so they do not crawl
+      for (let k = 1; k <= 11; k++) {
+        const f = k / 12 + 0.06 * Math.sin(k * 12.9898);
+        const wob = curly ? 0.030 * Math.sin(k * 2.1) : 0;
+        ctx.strokeStyle = rgba(COL.main, (0.30 - 0.020 * k) * hair);
+        ctx.lineWidth = k < 3 ? 1.4 : 0.9;
         ctx.beginPath();
         for (let i = 0; i <= N; i++) {
-          const v = top + (vEnd - top) * (i / N);
-          const u = outer(v) + (inner(v) - outer(v)) * clamp(f + wob, 0, 1);
-          const x = ux(sgn * u);
+          const v = vEnd * (i / N);
+          const uu = outer(v) + (inner(v) - outer(v)) * clamp(f + wob, 0, 1);
+          const x = ux(sgn * uu);
           i ? ctx.lineTo(x, vy(v)) : ctx.moveTo(x, vy(v));
         }
         ctx.stroke();
       }
+
     }
   }
 
@@ -1252,12 +1289,17 @@
     mass.quadraticCurveTo(ux(0), vy(vTip + 0.046), ux(wA * 0.86), vy(vTip + 0.014));
     mass.quadraticCurveTo(ux(wA * 0.36), vy((vRoot + vTip) * 0.5), ux(wA * 0.26), vy(vRoot));
     mass.closePath();
+    // A hologram has no skin to shade: a dark filled mass reads as a hole in the
+    // face, which is exactly what a black teardrop in the middle of the screen looks
+    // like. Keep the occlusion under the bridge only, let the edges do the modelling.
     const mg = ctx.createLinearGradient(0, vy(vRoot), 0, vy(vTip + 0.04));
-    mg.addColorStop(0, 'rgba(2,8,12,0.18)');
-    mg.addColorStop(0.6, 'rgba(2,8,12,0.55)');
-    mg.addColorStop(1, 'rgba(2,8,12,0.72)');
+    mg.addColorStop(0, 'rgba(2,8,12,0.06)');
+    mg.addColorStop(0.55, 'rgba(2,8,12,0.20)');
+    mg.addColorStop(0.92, 'rgba(2,8,12,0.20)');
+    mg.addColorStop(1, 'rgba(2,8,12,0.05)');
     ctx.fillStyle = mg;
     ctx.fill(mass);
+
 
     // shadow on the far side of the bridge
     const ns = ctx.createLinearGradient(ux(0), vy(vRoot), ux(wA * 0.9), vy(vTip));
@@ -1390,13 +1432,14 @@
       ctx.fillRect(-mw * 1.5, yc - hgt, mw * 3, hgt * 2);
     }
 
-    // lip body: an opaque dark base first, so the rain stops at the mouth
+    // lip body: enough occlusion to seat the mouth, not a solid black lozenge that
+    // punches a hole through the hologram
     ctx.beginPath();
     ctx.moveTo(-mwS, cornerY);
     for (let i = 1; i <= N; i++) { const x = xAt(i); ctx.lineTo(x, upper(x)); }
     for (let i = N; i >= 0; i--) { const x = xAt(i); ctx.lineTo(x, lower(x)); }
     ctx.closePath();
-    ctx.fillStyle = 'rgba(2,8,12,0.92)';
+    ctx.fillStyle = 'rgba(2,8,12,0.46)';
     ctx.fill();
 
     ctx.beginPath();
@@ -1546,9 +1589,10 @@
       ctx.restore();
     }
 
+    if (!OFF.has('hair')) drawHairSides();
+
     ctx.save();
     ctx.clip(hp);
-    if (!OFF.has('hair')) drawHairSides();
     // Transparency is the features' own alpha, not the rain's
     ctx.globalAlpha = clamp(P.transparency ?? 1, 0, 1);
     if (!OFF.has('eyes')) { drawEye(-1, t); drawEye(1, t); }
