@@ -781,15 +781,12 @@
 
   // Hair that frames the face: a band along each side, kept inside the head
   // outline so nothing wraps around the skull.
-  // Drawn OUTSIDE the head clip, after the shell. A bob or long hair has to stand
-  // off the skull: anything clipped to the silhouette can only ever read as a
-  // contour line, which is why "Long" looked bald. Volume is a param, not a constant.
-  //
-  // The band starts AT the crown point and swells downward. Two earlier shapes failed
-  // for opposite reasons: a fixed 5 % offset over the forehead read as a swim cap, and
-  // a dome placed above the crown floated in front of a skull that comes to a point at
-  // v = 0. One closed path from crown to jaw, outer edge offset, inner edge hugging the
-  // bone, is the shape that reads as hair.
+  // Drawn OUTSIDE the head fill, after the shell. Two things killed the earlier versions:
+  // a band that only ever touched the silhouette's outside edge reads as a second, larger
+  // head outline ("aura", not hair), and a fill at 0.3 alpha lets the skull's own rim light
+  // shine through it, which is the double contour that makes it look like a wire cage.
+  // So: the band overlaps INWARD over the bone (hiding that rim), it is dense enough to be a
+  // mass, and it is made of locks rather than evenly spaced lines.
   function drawHairSides() {
     const style = hairStyle();
     const hair = P.hair ?? 0.85;
@@ -806,57 +803,79 @@
       const flare = (v) => {
         const tt = clamp(v / vEnd, 0, 1);
         const ramp = Math.sin(Math.min(1, tt * 1.15) * Math.PI * 0.5);
-        const wave = curly ? 0.045 * mass * vol * Math.sin(v * 44 + sgn * 1.7) : 0;
-        return Math.max(0, 0.28 * mass * vol * ramp + wave);
+        const wave = curly ? 0.05 * mass * vol * Math.sin(v * 40 + sgn * 1.7) : 0;
+        return Math.max(0, 0.30 * mass * vol * ramp + wave);
       };
       const outer = (v) => hwAt(v) * (1 + flare(v));
+      // inner edge sits INSIDE the silhouette by a hair, so the shell's rim light is covered
       const inner = (v) => {
         const tt = clamp(v / vEnd, 0, 1);
-        // thin at the crown, full over the ears, and falling clear of the jaw
-        const band = (style === 5 ? 0.36 : style === 4 ? 0.32 : 0.30) * Math.pow(tt, 0.55);
+        const band = (style === 5 ? 0.40 : style === 4 ? 0.35 : 0.33) * Math.pow(tt, 0.5);
         const clear = style === 5 ? 0.34 * Math.pow(clamp((v - 0.80) / 0.34, 0, 1), 1.3) : 0;
-        return hwAt(v) * clamp(1 - band + clear, 0.30, 1.02);
+        return hwAt(v) * clamp(1 - band + clear, 0.28, 0.985);
       };
 
       const N = 26;
-      const p2 = new Path2D();
-      p2.moveTo(ux(0), vy(0));
+      const body = new Path2D();
+      body.moveTo(ux(0), vy(0));
       for (let i = 1; i <= N; i++) {
         const v = vEnd * (i / N);
-        p2.lineTo(ux(sgn * outer(v)), vy(v));
+        body.lineTo(ux(sgn * outer(v)), vy(v));
       }
-      p2.quadraticCurveTo(ux(sgn * (outer(vEnd) + inner(vEnd)) * 0.5), vy(vEnd + 0.05),
-                          ux(sgn * inner(vEnd)), vy(vEnd));
+      // the cut: a bob ends in a blunt arc, long hair in tips
+      if (style === 4) body.quadraticCurveTo(ux(sgn * (outer(vEnd) + inner(vEnd)) * 0.5), vy(vEnd + 0.012),
+                                             ux(sgn * inner(vEnd)), vy(vEnd));
+      else body.quadraticCurveTo(ux(sgn * (outer(vEnd) + inner(vEnd)) * 0.5), vy(vEnd + 0.05),
+                                 ux(sgn * inner(vEnd)), vy(vEnd));
       for (let i = N - 1; i >= 0; i--) {
         const v = vEnd * (i / N);
-        p2.lineTo(ux(sgn * inner(v)), vy(v));
+        body.lineTo(ux(sgn * inner(v)), vy(v));
       }
-      p2.closePath();
+      body.closePath();
 
-      // soft mass, never a solid fill: the shell's scan band has to read through it
-      const g = ctx.createLinearGradient(ux(sgn * outer(vEnd * 0.7)), 0, ux(sgn * inner(vEnd * 0.8)), 0);
-      g.addColorStop(0, `rgba(9,44,58,${0.46 * hair})`);
-      g.addColorStop(0.55, `rgba(6,30,40,${0.30 * hair})`);
-      g.addColorStop(1, 'rgba(3,14,20,0)');
+      // the mass. Dense at the outer edge, thinning toward the face, so the head's rim
+      // light no longer reads through it while the shell still shows where hair is thin.
+      const g = ctx.createLinearGradient(ux(sgn * outer(vEnd * 0.55)), 0, ux(sgn * inner(vEnd * 0.75)), 0);
+      g.addColorStop(0, `rgba(7,32,42,${0.90 * hair})`);
+      g.addColorStop(0.62, `rgba(5,22,30,${0.74 * hair})`);
+      g.addColorStop(1, `rgba(3,12,17,${0.30 * hair})`);
       ctx.fillStyle = g;
-      ctx.fill(p2);
+      ctx.fill(body);
 
-      // strands following the band, jittered from a deterministic hash so they do not crawl
-      for (let k = 1; k <= 11; k++) {
-        const f = k / 12 + 0.06 * Math.sin(k * 12.9898);
-        const wob = curly ? 0.030 * Math.sin(k * 2.1) : 0;
-        ctx.strokeStyle = rgba(COL.main, (0.30 - 0.020 * k) * hair);
-        ctx.lineWidth = k < 3 ? 1.4 : 0.9;
+      // locks, not a comb: six tapered clumps, each with a lit leading edge
+      const LOCKS = 6;
+      for (let k = 0; k < LOCKS; k++) {
+        const f0 = (k + 0.12) / LOCKS, f1 = (k + 0.94) / LOCKS;
+        const at = (v, f) => outer(v) + (inner(v) - outer(v)) * clamp(f, 0, 1);
+        const lockVEnd = vEnd * (0.86 + 0.14 * ((k * 0.37) % 1));
+        const lg = new Path2D();
+        lg.moveTo(ux(sgn * at(0, f0)), vy(0));
+        for (let i = 1; i <= 10; i++) {
+          const v = lockVEnd * (i / 10);
+          lg.lineTo(ux(sgn * at(v, f0 + 0.02 * (i / 10))), vy(v));
+        }
+        for (let i = 10; i >= 0; i--) {
+          const v = lockVEnd * (i / 10);
+          lg.lineTo(ux(sgn * at(v, f1 - 0.02 * (i / 10))), vy(v));
+        }
+        lg.closePath();
+        const lgl = ctx.createLinearGradient(ux(sgn * at(vEnd * 0.5, f0)), 0, ux(sgn * at(vEnd * 0.5, f1)), 0);
+        lgl.addColorStop(0, rgba(COL.main, 0.10 * hair));
+        lgl.addColorStop(0.7, rgba(COL.main, 0.03 * hair));
+        lgl.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = lgl;
+        ctx.fill(lg);
+        // leading edge of the lock: this is the highlight that reads as a strand
+        ctx.strokeStyle = rgba(COL.main, (0.30 - 0.03 * k) * hair);
+        ctx.lineWidth = 1.1;
         ctx.beginPath();
-        for (let i = 0; i <= N; i++) {
-          const v = vEnd * (i / N);
-          const uu = outer(v) + (inner(v) - outer(v)) * clamp(f + wob, 0, 1);
-          const x = ux(sgn * uu);
+        for (let i = 0; i <= 10; i++) {
+          const v = lockVEnd * (i / 10);
+          const x = ux(sgn * at(v, f0 + 0.02 * (i / 10)));
           i ? ctx.lineTo(x, vy(v)) : ctx.moveTo(x, vy(v));
         }
         ctx.stroke();
       }
-
     }
   }
 
@@ -965,6 +984,33 @@
       ctx.quadraticCurveTo(x * 1.006, vy(hv + drop * 0.6), x * 0.994, vy(hv + drop));
       ctx.stroke();
     }
+    ctx.restore();
+
+    // fringe mass: the forehead is the one place hair has to sit ON the face, and a
+    // handful of strands over a faint cap edge reads as a swim cap. Three lobes with a
+    // ragged lower edge, denser at the temples where a part would fall, and never a
+    // stroked hairline — the edge is the fill's own boundary.
+    ctx.save();
+    ctx.clip(cap);
+    const fr = new Path2D();
+    const lobes = style === 3 ? 1 : 3;
+    const frTop = -0.02;
+    fr.moveTo(ux(-hwH), vy(frTop));
+    for (let i = 0; i <= 40; i++) {
+      const q = i / 40;
+      const uu = lerp(-hwH, hwH, q);
+      const lw = Math.sin(q * Math.PI * lobes);                 // lobe wave across the brow
+      const dip = 0.034 + 0.030 * Math.abs(lw) + 0.020 * (1 - Math.abs(uu) / Math.max(1e-6, hwH));
+      fr.lineTo(ux(uu), vy(hv + dip));
+    }
+    fr.lineTo(ux(hwH), vy(frTop));
+    fr.closePath();
+    const fg = ctx.createLinearGradient(0, vy(frTop), 0, vy(hv + 0.05));
+    fg.addColorStop(0, `rgba(6,26,34,${0.62 * density})`);
+    fg.addColorStop(0.7, `rgba(5,20,27,${0.46 * density})`);
+    fg.addColorStop(1, `rgba(4,15,20,${0.10 * density})`);
+    ctx.fillStyle = fg;
+    ctx.fill(fr);
     ctx.restore();
 
     // no hairline stroke: the hair ends at its own fade, not at a drawn line
