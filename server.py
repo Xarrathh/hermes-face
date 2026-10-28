@@ -236,46 +236,138 @@ def _auto_idle_after(seconds: float, seq: int) -> None:
     threading.Thread(target=run, daemon=True).start()
 
 
+# ------------------------------------------------------------------ history
+HISTORY = HERE / "history.json"
+HIST_LOCK = threading.Lock()
+HIST_SESSIONS = 12
+HIST_TURNS = 80
+
+
+def load_history() -> dict:
+    try:
+        h = json.loads(HISTORY.read_text(encoding="utf-8"))
+        if isinstance(h, dict) and isinstance(h.get("sessions"), list):
+            return h
+    except (OSError, json.JSONDecodeError):
+        pass
+    return {"sessions": []}
+
+
+def save_history(h: dict) -> None:
+    tmp = HISTORY.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(h, indent=1), encoding="utf-8")
+    os.replace(tmp, HISTORY)
+
+
+def record_turn(heard: str, reply: str, sid: str) -> None:
+    """One entry per completed turn, grouped by the Hermes session it belongs to."""
+    with HIST_LOCK:
+        h = load_history()
+        sessions = h.setdefault("sessions", [])
+        sid = sid or ""
+        if not sessions or sessions[-1].get("sid") != sid:
+            sessions.append({"sid": sid, "started": time.time(), "turns": []})
+        turns = sessions[-1].setdefault("turns", [])
+        turns.append({"ts": time.time(), "heard": heard, "reply": reply})
+        sessions[-1]["turns"] = turns[-HIST_TURNS:]
+        del sessions[:-HIST_SESSIONS]
+        save_history(h)
+
+
+def handle_command(text: str) -> str:
+    """Slash commands typed into the face's own chat line.
+
+    The voice path speaks the returned string, so these read as sentences rather than
+    as shell output. Anything unrecognised is answered, never forwarded to the model:
+    a leading slash means the user is talking to Hermes, not to the assistant.
+    """
+    cmd, _, rest = text[1:].partition(" ")
+    cmd = cmd.strip().lower()
+    rest = rest.strip()
+
+    if cmd in ("help", "?"):
+        return ("Commands: slash new for a fresh conversation, slash status for this "
+                "session, slash history for what we have said, slash stop to interrupt, "
+                "slash help for this list.")
+    if cmd in ("new", "clear", "reset"):
+        with LOCK:
+            STATE.update(session="", heard="", reply="", audio=None)
+        return "New conversation. Nothing before this is carried forward."
+    if cmd == "status":
+        with LOCK:
+            sid, agent, seq = STATE["session"], STATE["agent"], STATE["seq"]
+        h = load_history()
+        turns = sum(len(s.get("turns", [])) for s in h.get("sessions", []))
+        # a command is answered while the turn that carries it is still "thinking", so
+        # report the state it is about to be rather than confusing the speaker
+        shown = "ready" if agent == "thinking" else agent
+        return (f"{shown}, turn {seq}. Session {sid[:12] if sid else 'new'}. "
+                f"Voice {load_config()['voice']}. {turns} turns in history.")
+    if cmd == "history":
+        h = load_history()
+        sessions = h.get("sessions", [])
+        turns = sum(len(s.get("turns", [])) for s in sessions)
+        last = ""
+        if sessions and sessions[-1].get("turns"):
+            last = sessions[-1]["turns"][-1].get("heard", "")[:60]
+        return (f"{len(sessions)} conversation{'s' if len(sessions) != 1 else ''}, "
+                f"{turns} turns. Last thing heard: {last or 'nothing yet'}.")
+    if cmd in ("stop", "cancel"):
+        with LOCK:
+            STATE.update(agent="idle", audio=None)
+        return "Stopped."
+    return f"Unknown command {cmd}. Try slash help."
+
+
 def run_turn(text: str, seq: int) -> None:
     heard = text.strip()
     if not heard:
         set_if_current(seq, agent="idle")
         return
-    qfile = AUDIO / f"q-{int(time.time() * 1000)}.txt"
-    qfile.write_text(PROMPT_PREFIX + heard, encoding="utf-8")
 
-    cmd = [str(HERMES), "chat", "--query-file", str(qfile), "--format", "stream-json",
-           "--pass-session-id"]
     with LOCK:
         sid = STATE["session"]
-    if sid:
-        cmd += ["--resume", sid]
 
-    reply, new_sid = "", sid
-    try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=240,
-                              stdin=subprocess.DEVNULL)
-        for raw in proc.stdout.splitlines():
-            raw = raw.strip()
-            if not raw.startswith("{"):
-                continue
-            try:
-                ev = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            if ev.get("type") == "result":
-                reply = (ev.get("text") or "").strip()
-                new_sid = ev.get("session_id") or new_sid
-        if not reply:
-            stderr = (proc.stderr or "").strip().splitlines()
-            reply = "The agent did not return an answer." + (f" ({stderr[-1][:160]})" if stderr else "")
-    except subprocess.TimeoutExpired:
-        reply = "That took too long, so I stopped."
-    except Exception as exc:                       # noqa: BLE001
-        reply = f"I hit an error: {exc}"
-    finally:
-        qfile.unlink(missing_ok=True)
+    if heard.startswith("/"):
+        # A leading slash is addressed to Hermes, not to the model: answer it locally so
+        # commands work in the chat line without a round trip through the agent.
+        reply = handle_command(heard)
+        with LOCK:
+            new_sid = STATE["session"]
+    else:
+        qfile = AUDIO / f"q-{int(time.time() * 1000)}.txt"
+        qfile.write_text(PROMPT_PREFIX + heard, encoding="utf-8")
+        cmd = [str(HERMES), "chat", "--query-file", str(qfile), "--format", "stream-json",
+               "--pass-session-id"]
+        if sid:
+            cmd += ["--resume", sid]
 
+        reply, new_sid = "", sid
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=240,
+                                  stdin=subprocess.DEVNULL)
+            for raw in proc.stdout.splitlines():
+                raw = raw.strip()
+                if not raw.startswith("{"):
+                    continue
+                try:
+                    ev = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if ev.get("type") == "result":
+                    reply = (ev.get("text") or "").strip()
+                    new_sid = ev.get("session_id") or new_sid
+            if not reply:
+                stderr = (proc.stderr or "").strip().splitlines()
+                reply = "The agent did not return an answer." + (f" ({stderr[-1][:160]})" if stderr else "")
+        except subprocess.TimeoutExpired:
+            reply = "That took too long, so I stopped."
+        except Exception as exc:                   # noqa: BLE001
+            reply = f"I hit an error: {exc}"
+        finally:
+            qfile.unlink(missing_ok=True)
+
+    record_turn(heard, reply, new_sid or "")
     speech = clean_for_speech(reply)[:1200]
     if not set_if_current(seq, agent="speaking", reply=reply, session=new_sid or ""):
         return                                     # this turn was abandoned
@@ -355,6 +447,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"voices": VOICES, "current": load_config()["voice"]})
         if path == "/state":
             return self._json(snapshot())
+        if path == "/history":
+            return self._json(load_history())
         if path == "/health":
             return self._json({"ok": True})
         if path.startswith("/audio/"):
@@ -386,6 +480,17 @@ class Handler(BaseHTTPRequestHandler):
                              reply="", error="", audio=None)
             threading.Thread(target=run_turn, args=(text, seq), daemon=True).start()
             return self._json({"ok": True, "seq": seq})
+
+        if path == "/history/clear":
+            with HIST_LOCK:
+                save_history({"sessions": []})
+            return self._json({"ok": True})
+
+        if path == "/history/resume":
+            sid = str(payload.get("sid") or "")
+            with LOCK:
+                STATE.update(session=sid, heard="", reply="", audio=None)
+            return self._json({"ok": True, "session": sid})
 
         if path == "/params":
             with LOCK:                             # read-modify-write must be one step

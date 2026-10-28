@@ -292,6 +292,74 @@
     queueSave();
   });
 
+  /* ------------------------------------------------------------ history */
+  const histPanel = $('#histPanel');
+  function fmtTime(ts) {
+    const d = new Date(ts * 1000);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  function renderHistory(h) {
+    const list = $('#histList');
+    const sessions = (h && h.sessions) || [];
+    if (!sessions.length) { list.innerHTML = '<div id="histEmpty">nothing yet</div>'; return; }
+    list.innerHTML = '';
+    for (let i = sessions.length - 1; i >= 0; i--) {
+      const s = sessions[i];
+      const box = document.createElement('div');
+      box.className = 'sess';
+      const head = document.createElement('div');
+      head.className = 'head';
+      const label = document.createElement('span');
+      label.textContent = (s.sid ? s.sid.slice(0, 10) : 'new session') + ' · ' + (s.turns || []).length + ' turns';
+      const resume = document.createElement('button');
+      resume.className = 'small';
+      resume.textContent = 'resume';
+      resume.addEventListener('click', async () => {
+        await fetch('/history/resume', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ sid: s.sid || '' }),
+        });
+        heardEl.textContent = 'resumed ' + (s.sid ? s.sid.slice(0, 10) : 'a fresh session');
+        toggleHistory(false);
+      });
+      head.append(label, resume);
+      box.append(head);
+      for (const turn of (s.turns || []).slice(-12)) {
+        const row = document.createElement('div');
+        row.className = 'turn';
+        const tEl = document.createElement('span');
+        tEl.className = 't';
+        tEl.textContent = fmtTime(turn.ts) + '  ';
+        const you = document.createElement('span');
+        you.className = 'you';
+        you.textContent = turn.heard;
+        const bot = document.createElement('div');
+        bot.className = 'bot';
+        bot.textContent = turn.reply;
+        row.append(tEl, you, bot);
+        box.append(row);
+      }
+      list.append(box);
+    }
+  }
+  async function refreshHistory() {
+    try {
+      const r = await fetch('/history', { cache: 'no-store' });
+      renderHistory(await r.json());
+    } catch { $('#histList').innerHTML = '<div id="histEmpty">history unavailable</div>'; }
+  }
+  function toggleHistory(on) {
+    const open = on === undefined ? !document.body.classList.contains('history-open') : on;
+    document.body.classList.toggle('history-open', open);
+    if (open) refreshHistory();
+  }
+  $('#hist').addEventListener('click', () => toggleHistory());
+  $('#histClose').addEventListener('click', () => toggleHistory(false));
+  $('#histClear').addEventListener('click', async () => {
+    await fetch('/history/clear', { method: 'POST' });
+    refreshHistory();
+  });
+
   $('#gear').addEventListener('click', () => togglePanel());
   $('#panelClose').addEventListener('click', () => togglePanel(false));
 
@@ -376,6 +444,7 @@
   addEventListener('keydown', (e) => {
     if (e.target === line) return;
     if (e.key === 'e' || e.key === 'E') { e.preventDefault(); togglePanel(); }
+    if (e.key === 'h' || e.key === 'H') { e.preventDefault(); toggleHistory(); }
     if (e.key === 'Escape') togglePanel(false);
   });
 
