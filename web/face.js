@@ -100,6 +100,7 @@
     buildMotes();
     buildCircuit();
     buildMatrix();
+    buildBgEffect();
   }
 
   /* ---------------------------------------------------------------- anatomy */
@@ -540,6 +541,161 @@
   }
 
   /* ---------------------------------------------------------------- backdrop */
+
+  /* ------------------------------------------------------------- background */
+  // The backdrop mirrors whichever shell effect is selected: same idiom, viewport
+  // scale, dimmed by `bgLevel`. It is drawn BEFORE the head, and the shell is opaque,
+  // so the part that falls behind the face is hidden for free — the background never
+  // needs to know where the head is, and none of it can leak into the face.
+  const BG = {
+    motes: [], traces: [], cols: [], cv: null, c: null, last: -1, ready: false,
+    w: 0, h: 0, ch: 26, cw: 16, CHARS: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ<>[]{}/\\|=+-*:.',
+  };
+
+  function buildBgEffect() {
+    BG.motes = [];
+    const n = Math.round(44 * clamp(P.moteCount ?? 1, 0.2, 2));
+    for (let i = 0; i < n; i++) {
+      BG.motes.push({ x: Math.random(), y: Math.random(), r: 0.7 + 1.5 * Math.random(),
+                      sp: 0.004 + 0.016 * Math.random(), ph: Math.random() * TAU });
+    }
+
+    // board traces: a coarse orthogonal/45° walk across the viewport. No head test —
+    // the opaque shell hides whatever passes behind it.
+    BG.traces = [];
+    const dirs = [[0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1]];
+    const step = VH * 0.052;
+    const want = Math.round(18 * clamp(P.circuitDensity ?? 1, 0.3, 2.5));
+    for (let i = 0; i < want; i++) {
+      let x = Math.random() * VW, y = Math.random() * VH;
+      let d = Math.floor(Math.random() * 8);
+      const pts = [[x, y]];
+      const legs = 6 + Math.floor(Math.random() * 6);
+      for (let k = 0; k < legs; k++) {
+        if (Math.random() < 0.45) d = (d + (Math.random() < 0.5 ? 1 : 7)) % 8;
+        const nx = x + dirs[d][0] * step, ny = y + dirs[d][1] * step;
+        if (nx < -step || nx > VW + step || ny < -step || ny > VH + step) break;
+        x = nx; y = ny; pts.push([x, y]);
+      }
+      if (pts.length > 1) BG.traces.push({ pts, ph: Math.random(), sp: 0.15 + 0.35 * Math.random() });
+    }
+
+    const ch = Math.max(14, VH * 0.030);
+    const cw = ch * 0.62;
+    const cv = BG.cv || document.createElement('canvas');
+    const dpr = DPR || 1;
+    cv.width = Math.round(VW * dpr); cv.height = Math.round(VH * dpr);
+    const c = cv.getContext('2d');
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    Object.assign(BG, { cv, c, ch, cw, w: VW, h: VH, ready: true, last: -1 });
+    BG.cols = [];
+    const nc = Math.max(1, Math.floor(VW / cw));
+    for (let i = 0; i < nc; i++) {
+      const h1 = hash01(i * 4.31), h2 = hash01(i * 9.17 + 7.3), h3 = hash01(i * 2.77 + 19.1);
+      BG.cols.push({ x: i * cw, seed: h1, speed: 0.35 + 0.8 * h2, len: 4 + Math.round(14 * h3) });
+    }
+  }
+
+  function drawBgEffect(t) {
+    const level = clamp(P.bgLevel ?? 0.35, 0, 1);
+    if (level < 0.01 || OFF.has('bg')) return;
+    const effect = clamp(Math.round(P.effect ?? 0), 0, 4);
+    if (effect === 2) return;                       // clean glass: nothing in the background either
+    if (!BG.ready) buildBgEffect();
+    const glow = P.glow ?? 1;
+    const cx = HEAD.cx, cy = vy(0.55);
+
+    ctx.save();
+    if (effect === 0) {
+      // wireframe: the shell's own idiom at 2.4x, so the backdrop reads as the room
+      // continuing behind the head
+      const rx = Math.max(VW, VH) * 0.62, ry = Math.max(VW, VH) * 0.48;
+      ctx.strokeStyle = rgba(COL.main, 0.13 * level * glow);
+      ctx.lineWidth = 1;
+      for (let i = 1; i <= 7; i++) {                 // latitude rings
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, rx * (i / 7), ry * (i / 7), 0, 0, TAU);
+        ctx.stroke();
+      }
+      for (let j = 1; j <= 4; j++) {                // longitude arcs: the dome, not bands
+        const k = j / 5;
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, rx * Math.max(0.04, Math.abs(Math.cos(k * Math.PI))), ry * 0.98, 0, 0, TAU);
+        ctx.stroke();
+      }
+      ctx.strokeStyle = rgba(COL.main, 0.075 * level * glow);
+      for (let k = 0; k < 16; k++) {                // spokes
+        const a = (k / 16) * TAU + t * 0.008;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(a) * rx * 0.16, cy + Math.sin(a) * ry * 0.16);
+        ctx.lineTo(cx + Math.cos(a) * rx, cy + Math.sin(a) * ry);
+        ctx.stroke();
+      }
+      const sk = (t * 0.05) % 1;
+      ctx.globalCompositeOperation = 'lighter';
+      const sg = ctx.createRadialGradient(cx, cy + (sk - 0.5) * ry * 2, 0, cx, cy + (sk - 0.5) * ry * 2, rx * 0.5);
+      sg.addColorStop(0, rgba(COL.main, 0.05 * level * glow));
+      sg.addColorStop(1, rgba(COL.main, 0));
+      ctx.fillStyle = sg;
+      ctx.fillRect(0, 0, VW, VH);
+    } else if (effect === 1) {
+      // particles: the same motes, spread over the room
+      ctx.globalCompositeOperation = 'lighter';
+      for (const m of BG.motes) {
+        const y = ((m.y - t * m.sp) % 1 + 1) % 1;
+        const a = (0.18 + 0.22 * Math.abs(Math.sin(t * 0.9 + m.ph))) * level * glow;
+        ctx.fillStyle = rgba(COL.main, a);
+        ctx.fillRect(m.x * VW, y * VH, m.r, m.r);
+      }
+    } else if (effect === 3) {
+      // circuit: the same board idiom, drawn as a backplane behind the face
+      ctx.strokeStyle = rgba(COL.main, 0.12 * level * glow);
+      ctx.lineWidth = 1;
+      for (const tr of BG.traces) {
+        ctx.beginPath();
+        ctx.moveTo(tr.pts[0][0], tr.pts[0][1]);
+        for (let i = 1; i < tr.pts.length; i++) ctx.lineTo(tr.pts[i][0], tr.pts[i][1]);
+        ctx.stroke();
+      }
+      ctx.globalCompositeOperation = 'lighter';
+      for (const tr of BG.traces) {
+        const segs = tr.pts.length - 1;
+        const s = ((t * tr.sp * 0.25 + tr.ph) % 1) * segs;
+        const i = Math.min(segs - 1, Math.floor(s)), f = s - i;
+        const x = lerp(tr.pts[i][0], tr.pts[i + 1][0], f), y = lerp(tr.pts[i][1], tr.pts[i + 1][1], f);
+        const eg = ctx.createRadialGradient(x, y, 0, x, y, 4 * (1 + level));
+        eg.addColorStop(0, rgba(COL.core, 0.34 * level * glow));
+        eg.addColorStop(1, rgba(COL.main, 0));
+        ctx.fillStyle = eg;
+        ctx.fillRect(x - 5 * (1 + level), y - 5 * (1 + level), 10 * (1 + level), 10 * (1 + level));
+      }
+    } else if (effect === 4) {
+      // matrix: the glyph rain fills the room, the face occludes its own part of it
+      if (BG.last < 0 || t - BG.last >= 1 / 12) {
+        BG.last = t;
+        const c = BG.c;
+        c.clearRect(0, 0, BG.w, BG.h);
+        c.font = `${Math.round(BG.ch * 0.94)}px "JetBrainsMono Nerd Font", "DejaVu Sans Mono", monospace`;
+        c.textBaseline = 'top';
+        const frame = Math.floor(t * 10);
+        for (const col of BG.cols) {
+          const span = BG.h + (col.len + 1) * BG.ch;
+          const head = ((col.seed * span) + t * col.speed * BG.ch * 6) % span - col.len * BG.ch;
+          for (let k = 0; k <= col.len; k++) {
+            const y = head - k * BG.ch;
+            if (y < -BG.ch || y > BG.h) continue;
+            const gi = Math.floor(hash01(col.x * 0.61 + k * 11.3 + (frame % 41) * 77.7) * BG.CHARS.length);
+            const a = (k === 0 ? 0.55 : 0.34 * Math.pow(1 - k / (col.len + 1), 1.7)) * level;
+            c.fillStyle = rgba(k === 0 ? COL.core : COL.main, a);
+            c.fillText(BG.CHARS[gi], col.x, y);
+          }
+        }
+      }
+      ctx.drawImage(BG.cv, 0, 0, BG.w, BG.h);
+    }
+    ctx.restore();
+  }
+
   function drawBackdrop(t) {
     const bg = ctx.createRadialGradient(VW * 0.5, VH * 0.42, 0, VW * 0.5, VH * 0.52, Math.max(VW, VH) * 0.78);
     bg.addColorStop(0, 'rgb(4,16,22)');
@@ -1621,6 +1777,7 @@
     updateSenses(dt, t);
 
     drawBackdrop(t);
+    drawBgEffect(t);
 
     ctx.save();
     ctx.translate(0, S.breath);
@@ -1700,6 +1857,7 @@
     buildMotes();
     buildCircuit();
     buildMatrix();
+    buildBgEffect();
   }
 
   window.__face = {

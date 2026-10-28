@@ -450,6 +450,14 @@
           "default": 0.3
         },
         {
+          "key": "bgLevel",
+          "label": "Background",
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.01,
+          "default": 0.35
+        },
+        {
           "key": "circuitDensity",
           "label": "Trace density",
           "min": 0.3,
