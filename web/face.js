@@ -97,6 +97,7 @@
     layout();
     rebuildGeometry();
     buildRain();
+    buildFaceField();
   }
 
   /* ---------------------------------------------------------------- anatomy */
@@ -381,7 +382,7 @@
       }
       if (col.y < -gh) continue;
       const gi = Math.floor(Math.random() * RAIN.count);
-      c.globalAlpha = Math.min(1, col.b * 1.05);
+      c.globalAlpha = Math.min(1, col.b * 1.18);
       c.drawImage(RAIN.atlas, gi * gw, 0, gw, gh, Math.round(col.x), Math.round(col.y), gw, gh);
       // a brighter head glyph, the classic matrix tick
       c.globalAlpha = Math.min(1, col.b + 0.35);
@@ -401,6 +402,90 @@
     ctx.restore();
   }
 
+  /* ---------------------------------------------------------------- glyph field */
+  // The face is not a surface with rain on it: it is a field of characters. Cells are
+  // laid out over the head bounding box, kept only if their centre falls inside the
+  // silhouette, and each carries a mask factor (bright near the edge, quiet in the
+  // middle so the features still read). Redrawn at ~12 Hz, blitted every frame.
+  const FIELD = {
+    cv: document.createElement('canvas'), c: null, atlas: null,
+    cells: [], gw: 12, gh: 16, w: 0, h: 0, x0: 0, y0: 0, last: -1, ready: false,
+  };
+
+  function buildFaceField() {
+    const geo = headPath();
+    const scratch = document.createElement('canvas').getContext('2d');
+    const pitch = Math.max(9, Math.round(HEAD.w / 34));
+    const gw = pitch;
+    const gh = Math.round(pitch * 1.32);
+    FIELD.gw = gw; FIELD.gh = gh;
+
+    const pad = gw * 2;
+    FIELD.w = Math.ceil(HEAD.w + pad * 2);
+    FIELD.h = Math.ceil(HEAD.h + pad * 2);
+    FIELD.x0 = Math.round(HEAD.cx - FIELD.w / 2);
+    FIELD.y0 = Math.round(HEAD.cy - FIELD.h / 2);
+    FIELD.cv.width = FIELD.w;
+    FIELD.cv.height = FIELD.h;
+    FIELD.c = FIELD.cv.getContext('2d');
+
+    // atlas at this cell size
+    const atlas = document.createElement('canvas');
+    atlas.width = gw * RAIN.count;
+    atlas.height = gh;
+    const a = atlas.getContext('2d');
+    a.font = `500 ${Math.round(gh * 0.82)}px "JetBrainsMono Nerd Font", monospace`;
+    a.textAlign = 'center';
+    a.textBaseline = 'middle';
+    a.fillStyle = rgba(COL.main, 1);
+    for (let i = 0; i < RAIN.count; i++) {
+      a.fillText(GLYPHS[(i * 5 + 1) % GLYPHS.length], i * gw + gw / 2, gh * 0.53);
+    }
+    FIELD.atlas = atlas;
+
+    FIELD.cells = [];
+    const cols = Math.ceil(FIELD.w / gw);
+    const rows = Math.ceil(FIELD.h / gh);
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const lx = c * gw + gw / 2;
+        const ly = r * gh + gh / 2;
+        const px = FIELD.x0 + lx;
+        const py = FIELD.y0 + ly;
+        if (!scratch.isPointInPath(geo, px, py)) continue;
+        // mask: quiet in the middle of the face, alive at the edges
+        const dx = (px - HEAD.cx) / (HEAD.w / 2);
+        const dy = (py - (HEAD.cy + HEAD.h * 0.06)) / (HEAD.h / 2);
+        const rad = Math.min(1, Math.hypot(dx * 0.95, dy * 0.85));
+        const mask = 0.20 + 0.80 * smoothstep(0.12, 0.85, rad);
+        FIELD.cells.push({
+          x: Math.round(c * gw), y: Math.round(r * gh),
+          g: Math.floor(Math.random() * RAIN.count),
+          ph: Math.random() * TAU,
+          mask,
+        });
+      }
+    }
+    FIELD.ready = true;
+    FIELD.last = -1;
+  }
+
+  function renderFaceField(t) {
+    if (!FIELD.ready || !FIELD.c) return;
+    if (t - FIELD.last < 0.085 && FIELD.last > 0) return;    // ~12 Hz
+    FIELD.last = t;
+    const c = FIELD.c;
+    const { gw, gh } = FIELD;
+    c.clearRect(0, 0, FIELD.w, FIELD.h);
+    for (const cell of FIELD.cells) {
+      // glyphs swap now and then, and each flickers on its own phase
+      const flick = 0.55 + 0.45 * Math.sin(t * 3.3 + cell.ph);
+      c.globalAlpha = Math.min(1, cell.mask * flick * 0.95);
+      c.drawImage(FIELD.atlas, cell.g * gw, 0, gw, gh, cell.x, cell.y, gw, gh);
+    }
+    c.globalAlpha = 1;
+  }
+
   /* ---------------------------------------------------------------- backdrop */
   function drawBackdrop(t) {
     const bg = ctx.createRadialGradient(VW * 0.5, VH * 0.42, 0, VW * 0.5, VH * 0.52, Math.max(VW, VH) * 0.78);
@@ -412,7 +497,7 @@
 
     // the room is code too, just further away
     const rain = P.rain ?? 0.95;
-    drawRain(0.36 * rain);
+    drawRain(0.15 * rain);
 
     // horizon glow, so the rain has a floor to stand on
     const horizon = VH * 0.80;
@@ -828,16 +913,15 @@
 
     drawHairFront();
 
-    // the face carries the same code, drawn tighter so it reads as surface
-    ctx.save();
-    ctx.clip(hp);
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.globalAlpha = Math.min(1, 1.10 * (P.rain ?? 0.95));
-    ctx.translate(HEAD.cx, HEAD.cy);
-    ctx.scale(0.86, 0.86);
-    ctx.translate(-HEAD.cx, -HEAD.cy);
-    ctx.drawImage(RAIN.buf, 0, 0);
-    ctx.restore();
+    // the face itself: a field of glyphs, brightest at its edges
+    if (FIELD.ready) {
+      ctx.save();
+      ctx.clip(hp);
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = Math.min(1, 1.25 * (P.rain ?? 0.95));
+      ctx.drawImage(FIELD.cv, FIELD.x0, FIELD.y0);
+      ctx.restore();
+    }
 
     // scan band
     const scan = P.scan ?? 0.55;
@@ -992,8 +1076,8 @@
     ctx.restore();
 
     // lids
-    ctx.strokeStyle = rgba(COL.core, 0.50 * glow);
-    ctx.lineWidth = 1.7;
+    ctx.strokeStyle = rgba(COL.core, 0.72 * glow);
+    ctx.lineWidth = 1.9;
     ctx.lineJoin = 'round';
     ctx.shadowColor = rgba(COL.main, 0.55);
     ctx.shadowBlur = 6 * glow;
@@ -1308,8 +1392,8 @@
     }
 
     // seam: dark line with a thin bright inner edge
-    ctx.strokeStyle = 'rgba(0,3,5,0.90)';
-    ctx.lineWidth = 2.2;
+    ctx.strokeStyle = 'rgba(0,3,5,0.95)';
+    ctx.lineWidth = 2.6;
     ctx.beginPath();
     for (let i = 0; i <= N; i++) {
       const x = xAt(i);
@@ -1317,8 +1401,8 @@
       i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
     }
     ctx.stroke();
-    ctx.strokeStyle = rgba(COL.core, 0.30 * glow);
-    ctx.lineWidth = 1.0;
+    ctx.strokeStyle = rgba(COL.core, 0.46 * glow);
+    ctx.lineWidth = 1.1;
     ctx.beginPath();
     for (let i = 0; i <= N; i++) {
       const x = xAt(i);
@@ -1372,6 +1456,7 @@
 
     updateSenses(dt, t);
     rainStep(dt, (P.rainSpeed ?? 1));
+    renderFaceField(S.t);
 
     drawBackdrop(t);
 
@@ -1385,13 +1470,22 @@
 
     ctx.save();
     ctx.clip(hp);
-    // the middle of the face is quieter, so eyes/nose/mouth read through the code
-    const calm = ctx.createRadialGradient(ux(0), vy(0.62), dU(0.05), ux(0), vy(0.60), dU(0.56));
-    calm.addColorStop(0, 'rgba(2,10,14,0.46)');
-    calm.addColorStop(0.55, 'rgba(2,10,14,0.20)');
-    calm.addColorStop(1, 'rgba(2,10,14,0)');
-    ctx.fillStyle = calm;
-    ctx.fillRect(ux(-1), vy(0.10), dU(2), dV(0.85));
+    // quiet cut-outs behind the feature bands: the code stays dense on the cheeks
+    // and skull, but the eyes and mouth get a dark backing to read against
+    for (const [vc, rx, ry, alpha] of [[P.eyeY ?? 0.5, 0.74, 0.090, 0.60],
+                                       [(P.noseTop ?? 0.5) + 0.135, 0.42, 0.150, 0.50]]) {
+      const g2 = ctx.createRadialGradient(ux(0), vy(vc), 1, ux(0), vy(vc), dU(rx));
+      g2.addColorStop(0, `rgba(2,9,13,${alpha})`);
+      g2.addColorStop(0.7, `rgba(2,9,13,${alpha * 0.55})`);
+      g2.addColorStop(1, 'rgba(2,9,13,0)');
+      ctx.save();
+      ctx.translate(ux(0), vy(vc));
+      ctx.scale(1, dV(ry) / dU(rx));
+      ctx.translate(-ux(0), -vy(vc));
+      ctx.fillStyle = g2;
+      ctx.fillRect(ux(-rx), vy(vc) - dU(rx), dU(rx * 2), dU(rx * 2));
+      ctx.restore();
+    }
     if (!OFF.has('hair')) drawHairSides();
     if (!OFF.has('eyes')) { drawEye(-1, t); drawEye(1, t); }
     if (!OFF.has('brows')) { drawBrow(-1); drawBrow(1); }
@@ -1455,6 +1549,7 @@
     if (COL.main.join() !== hueBefore || COL.core.join() !== satBefore) buildRain();
     layout();
     rebuildGeometry();
+    buildFaceField();
   }
 
   window.__face = {
