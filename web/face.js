@@ -99,6 +99,7 @@
     rebuildGeometry();
     buildMotes();
     buildCircuit();
+    buildMatrix();
   }
 
   /* ---------------------------------------------------------------- anatomy */
@@ -881,6 +882,74 @@
   }
 
   /* ---------------------------------------------------------------- shell */
+
+  const hash01 = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+
+  /* ---------------------------------------------------------------- matrix */
+  // Glyph rain, rebuilt on the rules the first attempt earned: the shell above is dark and
+  // OPAQUE (a translucent one turns the face into a window onto the room's glyphs), one
+  // glyph per cell so a trail is characters and not a smear, and a single capped additive
+  // pass. Drawn into an offscreen canvas at 12 Hz and blitted: drawing every cell every
+  // frame at 60 Hz halves the frame rate.
+  const MATRIX = {
+    cv: null, c: null, cols: [], x0: 0, y0: 0, w: 0, h: 0, ch: 16, cw: 10, last: -1, ready: false,
+    CHARS: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ<>[]{}/\\|=+-*:.',
+  };
+
+  function buildMatrix() {
+    const dpr = DPR || 1;
+    const ch = Math.max(8, dV(0.030) / clamp(P.matrixDensity ?? 1, 0.4, 2.2));
+    const cw = ch * 0.60;
+    const x0 = ux(-1.14), y0 = vy(-0.13);
+    const w = dU(2.32), h = dV(1.38);
+    const cv = MATRIX.cv || document.createElement('canvas');
+    cv.width = Math.max(1, Math.round(w * dpr));
+    cv.height = Math.max(1, Math.round(h * dpr));
+    const c = cv.getContext('2d');
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    Object.assign(MATRIX, { cv, c, x0, y0, w, h, ch, cw, ready: true, last: -1 });
+    const n = Math.max(1, Math.floor(w / cw));
+    MATRIX.cols = [];
+    for (let i = 0; i < n; i++) {
+      const h1 = hash01(i * 7.13), h2 = hash01(i * 3.71 + 11.7), h3 = hash01(i * 5.19 + 29.3);
+      MATRIX.cols.push({ x: i * cw, seed: h1, speed: 0.5 + 1.0 * h2, len: 5 + Math.round(18 * h3) });
+    }
+  }
+
+  function drawMatrix(hp, t) {
+    if (!MATRIX.ready) buildMatrix();
+    const trail = clamp(P.matrixTrail ?? 1, 0.2, 2.5);
+    const glow = P.glow ?? 1;
+    if (MATRIX.last < 0 || t - MATRIX.last >= 1 / 12) {
+      MATRIX.last = t;
+      const c = MATRIX.c;
+      c.clearRect(0, 0, MATRIX.w, MATRIX.h);
+      c.font = `${Math.round(MATRIX.ch * 0.94)}px "JetBrainsMono Nerd Font", "DejaVu Sans Mono", monospace`;
+      c.textBaseline = 'top';
+      const frame = Math.floor(t * 10);          // glyphs step at 10 Hz, columns at 12
+      for (const col of MATRIX.cols) {
+        const len = Math.round(col.len * trail);
+        const span = MATRIX.h + (len + 1) * MATRIX.ch;
+        const head = ((col.seed * span) + t * col.speed * MATRIX.ch * 7) % span - len * MATRIX.ch;
+        for (let k = 0; k <= len; k++) {
+          const y = head - k * MATRIX.ch;
+          if (y < -MATRIX.ch || y > MATRIX.h) continue;
+          const gi = Math.floor(hash01(col.x * 0.73 + k * 13.77 + (frame % 41) * 91.31) * MATRIX.CHARS.length);
+          const a = k === 0 ? 1 : Math.pow(1 - k / (len + 1), 1.7);
+          c.fillStyle = k === 0 ? rgba(COL.core, 0.95) : rgba(COL.main, 0.62 * a);
+          c.fillText(MATRIX.CHARS[gi], col.x, y);
+        }
+      }
+    }
+    ctx.drawImage(MATRIX.cv, MATRIX.x0, MATRIX.y0, MATRIX.w, MATRIX.h);
+    // glow pass, capped: the shell behind is opaque, so this stays additive on top of text
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.30 * glow;
+    ctx.drawImage(MATRIX.cv, MATRIX.x0, MATRIX.y0, MATRIX.w, MATRIX.h);
+    ctx.restore();
+  }
+
   function drawShell(t, hp) {
     const cx = ux(0);
     const glow = P.glow ?? 1;
@@ -971,10 +1040,11 @@
     drawHairFront();
 
     // surface effect: the shell, motes, or nothing
-    const effect = clamp(Math.round(P.effect ?? 0), 0, 3);
+    const effect = clamp(Math.round(P.effect ?? 0), 0, 4);
     if (effect === 0) drawWire(hp, t);
     else if (effect === 1) drawMotes(hp, t);
     else if (effect === 3) drawCircuit(hp, t);
+    else if (effect === 4) drawMatrix(hp, t);
 
     // scan band
     const scan = P.scan ?? 0.55;
@@ -1629,6 +1699,7 @@
     rebuildGeometry();
     buildMotes();
     buildCircuit();
+    buildMatrix();
   }
 
   window.__face = {

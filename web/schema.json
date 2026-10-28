@@ -397,7 +397,8 @@
             "Wireframe",
             "Particles",
             "Clean glass",
-            "Circuit"
+            "Circuit",
+            "Matrix"
           ]
         },
         {
@@ -501,6 +502,33 @@
           "step": 0.01,
           "default": 1.0,
           "effect": 1
+        },
+        {
+          "key": "matrixDensity",
+          "label": "Glyph density",
+          "min": 0.5,
+          "max": 2.2,
+          "step": 0.01,
+          "default": 1.0,
+          "effect": 4
+        },
+        {
+          "key": "matrixSpeed",
+          "label": "Fall speed",
+          "min": 0.2,
+          "max": 3.0,
+          "step": 0.01,
+          "default": 1.0,
+          "effect": 4
+        },
+        {
+          "key": "matrixTrail",
+          "label": "Trail length",
+          "min": 0.2,
+          "max": 2.5,
+          "step": 0.01,
+          "default": 1.0,
+          "effect": 4
         }
       ]
     },
@@ -827,6 +855,20 @@
       "scan": 0.25,
       "breath": 0.75,
       "gaze": 0.45
+    },
+    "Matrix": {
+      "effect": 4,
+      "hue": 142,
+      "sat": 0.88,
+      "glow": 1.15,
+      "scan": 0.35,
+      "flicker": 0.25,
+      "matrixDensity": 1.45,
+      "matrixSpeed": 1.15,
+      "matrixTrail": 1.25,
+      "headWidth": 0.98,
+      "hairStyle": 1,
+      "hair": 0.35
     }
   }
 }
