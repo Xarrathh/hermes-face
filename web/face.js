@@ -97,8 +97,6 @@
     G.vignette = null;
     layout();
     rebuildGeometry();
-    buildRain();
-    buildRoom();
     buildMotes();
   }
 
@@ -313,173 +311,6 @@
     return p;
   }
 
-  /* ---------------------------------------------------------------- code rain */
-  // One shared glyph buffer per frame, drawn twice: dim across the room, brighter
-  // inside the head so the face itself is made of falling code. A canvas buffer
-  // decays under a destination-out wash, so every glyph leaves its own trail.
-  const RAIN = {
-    buf: document.createElement('canvas'),
-    c: null,
-    atlas: document.createElement('canvas'),
-    headAtlas: document.createElement('canvas'),
-    ac: null,
-    glyphW: 16, glyphH: 22, count: 44,
-    cols: [], w: 0, h: 0, ready: false, phase: 0,
-  };
-  const GLYPH_SETS = [
-    'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワン0123456789ABCDEF<>[]{}/\\|=+*',
-    '01',
-    '⠁⠂⠃⠄⠅⠆⠇⠈⠉⠊⠋⠌⠍⠎⠏⠐⠑⠒⠓⠔⠕⠖⠗⠘⠙⠚⠛⠜⠝⠞⠟⡀⡁⡂⡃⡄⡅⡆⡇⣀⣁⣂⣃⣄⣅⣆⣇⣿',
-    'ᚠᚡᚢᚣᚤᚥᚦᚧᚨᚩᚪᚫᚬᚭᚮᚯᚰᚱᚲᚳᚴᚵᚶᚷᚸᚹᚺᚻᚼᚽᚾᚿᛀᛁᛂᛃᛄᛅᛆᛇᛈᛉᛊᛋᛌᛍᛎᛏᛐᛑᛒᛓ',
-    '⎔⎕⌁⌂⌃⌄⌅⌆⌇⌈⌉⌊⌋⌌⌍⌎⌏⌐⌑⌒⌓⌔⌕⌖⌗⌘⌙⌚⌛⌜⌝⌞⌟⌠⌡⌢⌣⌤⌥⌦⌧⌨〈〉⌫⌬',
-  ];
-  const glyphSet = () => GLYPH_SETS[clamp(Math.round(P.charset ?? 0), 0, GLYPH_SETS.length - 1)];
-
-  function buildRain() {
-    RAIN.w = Math.round(VW);
-    RAIN.h = Math.round(VH);
-    RAIN.buf.width = RAIN.w;
-    RAIN.buf.height = RAIN.h;
-    RAIN.c = RAIN.buf.getContext('2d');
-    RAIN.c.clearRect(0, 0, RAIN.w, RAIN.h);
-
-    // two atlases: body glyphs in the palette colour, and a near-white head set
-    // so the leading character of every column burns brighter than its trail
-    const gw = RAIN.glyphW, gh = RAIN.glyphH;
-    const fonts = `500 ${Math.round(gh * 0.78)}px "JetBrainsMono Nerd Font", monospace`;
-    const headCol = hsl2rgb(P.hue ?? 186, (P.sat ?? 0.78) * 0.55, 0.84);
-    for (const [canvas, colour] of [[RAIN.atlas, rgba(COL.main, 1)], [RAIN.headAtlas, rgba(headCol, 1)]]) {
-      canvas.width = gw * RAIN.count;
-      canvas.height = gh;
-      const a = canvas.getContext('2d');
-      a.clearRect(0, 0, canvas.width, gh);
-      a.font = fonts;
-      a.textAlign = 'center';
-      a.textBaseline = 'middle';
-      a.fillStyle = colour;
-      const set = glyphSet();
-      for (let i = 0; i < RAIN.count; i++) a.fillText(set[(i * 7 + 3) % set.length], i * gw + gw / 2, gh * 0.54);
-    }
-
-    const cols = Math.max(24, Math.round(VW / gw));
-    RAIN.cols = [];
-    for (let i = 0; i < cols; i++) {
-      RAIN.cols.push({
-        x: i * gw + (gw - gw) / 2,
-        y: rnd(-VH, VH),
-        sp: rnd(55, 170),
-        b: rnd(0.35, 1),
-        cell: -1,
-      });
-    }
-    RAIN.ready = true;
-  }
-
-  function rainStep(dt, speed) {
-    if (!RAIN.ready) return;
-    const c = RAIN.c;
-    // fade what is already there: this is what turns glyphs into trails
-    c.globalCompositeOperation = 'destination-out';
-    c.fillStyle = 'rgba(0,0,0,0.034)';
-    c.fillRect(0, 0, RAIN.w, RAIN.h);
-    c.globalCompositeOperation = 'source-over';
-
-    const gw = RAIN.glyphW, gh = RAIN.glyphH;
-    for (const col of RAIN.cols) {
-      col.y += col.sp * speed * dt;
-      if (col.y > RAIN.h + gh) {
-        col.y = -rnd(40, VH * 0.9);
-        col.sp = rnd(55, 170);       // px per second
-        col.b = rnd(0.35, 1);
-        col.cell = -1;
-      }
-      const cell = Math.floor(col.y / gh);
-      if (cell !== col.cell) {
-        // one glyph per cell, so the trail is discrete characters, not a smear
-        col.cell = cell;
-        const gi = Math.floor(Math.random() * RAIN.count);
-        c.globalAlpha = Math.min(1, col.b);
-        c.drawImage(RAIN.atlas, gi * gw, 0, gw, gh, Math.round(col.x), cell * gh, gw, gh);
-      }
-      // the head itself, brighter and slightly behind the leading cell
-      const hi = Math.floor(Math.random() * RAIN.count);
-      c.globalAlpha = Math.min(1, 0.55 + col.b * 0.45);
-      c.drawImage(RAIN.headAtlas, hi * gw, 0, gw, gh, Math.round(col.x), Math.round(col.y), gw, gh);
-    }
-    c.globalAlpha = 1;
-  }
-
-  function drawRain(alpha, clipPath) {
-    if (!RAIN.ready || alpha <= 0.01) return;
-    ctx.save();
-    if (clipPath) ctx.clip(clipPath);
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.globalAlpha = Math.min(1, alpha);
-    ctx.drawImage(RAIN.buf, 0, 0);
-    ctx.restore();
-  }
-
-  /* ---------------------------------------------------------------- room rain */
-  // The room gets its own buffer: short trails and a wider spacing, so it reads as
-  // sparse falling characters instead of the face layer's long trails drawn dim --
-  // that veil is what looked like a ghost of the matrix.
-  const ROOM = {
-    cv: document.createElement('canvas'), c: null, cols: [],
-    w: 0, h: 0, gw: 14, gh: 20, ready: false, lastCell: 0,
-  };
-
-  function buildRoom() {
-    ROOM.w = Math.round(VW);
-    ROOM.h = Math.round(VH);
-    ROOM.cv.width = ROOM.w;
-    ROOM.cv.height = ROOM.h;
-    ROOM.c = ROOM.cv.getContext('2d');
-    ROOM.c.clearRect(0, 0, ROOM.w, ROOM.h);
-    ROOM.cols = [];
-    const spacing = 30;
-    for (let x = 0; x < ROOM.w; x += spacing) {
-      ROOM.cols.push({ x, y: rnd(-VH, VH), sp: rnd(40, 120), b: rnd(0.30, 0.85), cell: -1 });
-    }
-    ROOM.ready = true;
-  }
-
-  function stepRoom(dt, speed) {
-    if (!ROOM.ready || !RAIN.atlas) return;
-    const c = ROOM.c;
-    c.globalCompositeOperation = 'destination-out';
-    c.fillStyle = 'rgba(0,0,0,0.075)';
-    c.fillRect(0, 0, ROOM.w, ROOM.h);
-    c.globalCompositeOperation = 'source-over';
-    const { gw, gh } = ROOM;
-    for (const col of ROOM.cols) {
-      col.y += col.sp * speed * dt;
-      if (col.y > ROOM.h + gh) {
-        col.y = -rnd(60, VH * 0.7);
-        col.sp = rnd(40, 120);
-        col.b = rnd(0.30, 0.85);
-        col.cell = -1;
-      }
-      const cell = Math.floor(col.y / gh);
-      if (cell !== col.cell) {
-        col.cell = cell;
-        const gi = Math.floor(Math.random() * RAIN.count);
-        c.globalAlpha = col.b;
-        c.drawImage(RAIN.atlas, gi * RAIN.glyphW, 0, RAIN.glyphW, RAIN.glyphH,
-                    Math.round(col.x), cell * gh, gw, gh);
-      }
-    }
-    c.globalAlpha = 1;
-  }
-
-  function drawRoom(alpha) {
-    if (!ROOM.ready || alpha <= 0.01) return;
-    ctx.save();
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.globalAlpha = Math.min(1, alpha);
-    ctx.drawImage(ROOM.cv, 0, 0);
-    ctx.restore();
-  }
-
   /* ---------------------------------------------------------------- face effects */
   // Effect 0 is the code rain (drawn below); 1 is the old latitude/longitude shell,
   // 2 is drifting motes, 3 is bare glass.
@@ -498,7 +329,7 @@
   }
 
   function drawWire(hp, t) {
-    const glow = (P.glow ?? 1) * (0.4 + 0.6 * (P.faceRain ?? 2.6) / 3);
+    const glow = P.glow ?? 1;
     ctx.save();
     ctx.clip(hp);
     ctx.globalCompositeOperation = 'lighter';
@@ -547,7 +378,7 @@
 
   function drawMotes(hp, t) {
     if (!MOTES.ready) buildMotes();
-    const amt = Math.min(1.6, (P.faceRain ?? 2.6) / 2);
+    const amt = Math.min(1.4, 0.6 + (P.glow ?? 1) * 0.4);
     ctx.save();
     ctx.clip(hp);
     ctx.globalCompositeOperation = 'lighter';
@@ -574,31 +405,15 @@
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, VW, VH);
 
-    // the room carries the same code when code is the effect; otherwise it stays dim
-    const rain = P.rain ?? 0.32;
-    const eff = Math.round(P.effect ?? 0);
-    if (eff === 0 || eff === 4) {
-      if (eff === 4) {
-        // distant rain: the same buffer, smaller and dimmer
-        ctx.save();
-        ctx.globalCompositeOperation = 'lighter';
-        ctx.globalAlpha = Math.min(1, rain * 0.55);
-        ctx.translate(VW / 2, VH / 2);
-        ctx.scale(0.55, 0.55);
-        ctx.translate(-VW / 2, -VH / 2);
-        ctx.drawImage(RAIN.buf, 0, 0);
-        ctx.restore();
-      }
-      drawRoom(rain);
-    }
 
-    // horizon glow, so the rain has a floor to stand on
+
+    // horizon glow, so the head has a floor to stand on
     const horizon = VH * 0.80;
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     const hg = ctx.createLinearGradient(0, horizon - VH * 0.05, 0, horizon + VH * 0.10);
     hg.addColorStop(0, rgba(COL.main, 0));
-    hg.addColorStop(0.5, rgba(COL.main, 0.06 * Math.min(1, rain)));
+    hg.addColorStop(0.5, rgba(COL.main, 0.06));
     hg.addColorStop(1, rgba(COL.main, 0));
     ctx.fillStyle = hg;
     ctx.fillRect(0, horizon - VH * 0.05, VW, VH * 0.15);
@@ -976,42 +791,10 @@
 
     drawHairFront();
 
-    // the same falling rain, bright where it crosses the face and dim in the room:
-    // one system, modulated by the silhouette rather than a second texture
-    if (RAIN.ready) {
-      // transparency * faceRain = how much code the face carries; whole passes stack,
-      // so the top of the slider is genuinely brighter instead of clamping at 1
-      const effect = clamp(Math.round(P.effect ?? 0), 0, 4);
-      if (effect === 1) drawWire(hp, t);
-      else if (effect === 2) drawMotes(hp, t);
-      const fr = (effect === 0 || effect === 4) ? Math.max(0, P.faceRain ?? 2.6) : 0;
-      if (fr > 0.02) {
-        // Source-over, so the code keeps its hue at full strength. Additive stacking
-        // is what turned the face white: six passes of any colour clip to white.
-        // Additive, but capped: six additive passes clip to white, and repeated
-        // source-over lays a milky film over the head, which is the "ghost" look.
-        // One to three passes at a bounded total keeps the glyphs crisp and coloured.
-        const total = clamp(fr * 0.24, 0, 1.35);
-        const passes = Math.max(1, Math.ceil(total));
-        ctx.save();
-        ctx.clip(hp);
-        ctx.globalCompositeOperation = 'lighter';
-        if (effect === 4) {
-          ctx.save();
-          ctx.translate(HEAD.cx, HEAD.cy);
-          ctx.scale(0.55, 0.55);
-          ctx.translate(-HEAD.cx, -HEAD.cy);
-          ctx.globalAlpha = Math.min(0.8, total * 0.45);
-          ctx.drawImage(RAIN.buf, 0, 0);
-          ctx.restore();
-        }
-        for (let i = 0; i < passes; i++) {
-          ctx.globalAlpha = Math.min(1, total - i);
-          ctx.drawImage(RAIN.buf, 0, 0);
-        }
-        ctx.restore();
-      }
-    }
+    // surface effect: the shell, motes, or nothing
+    const effect = clamp(Math.round(P.effect ?? 0), 0, 2);
+    if (effect === 0) drawWire(hp, t);
+    else if (effect === 1) drawMotes(hp, t);
 
     // scan band
     const scan = P.scan ?? 0.55;
@@ -1575,8 +1358,6 @@
     const t = S.t;
 
     updateSenses(dt, t);
-    rainStep(dt, (P.rainSpeed ?? 1));
-    stepRoom(dt, (P.rainSpeed ?? 1));
 
     drawBackdrop(t);
 
@@ -1652,15 +1433,8 @@
     const hueBefore = COL.main.join(), satBefore = COL.core.join();
     P = Object.assign({}, P, next);
     palette();
-    if (COL.main.join() !== hueBefore || COL.core.join() !== satBefore) {
-      buildRain();
-      RAIN.c.clearRect(0, 0, RAIN.w, RAIN.h);
-      buildRoom();
-    }
     layout();
     rebuildGeometry();
-    buildRain();
-    buildRoom();
     buildMotes();
   }
 

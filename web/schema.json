@@ -374,11 +374,9 @@
           "kind": "select",
           "default": 0,
           "options": [
-            "Code rain",
             "Wireframe",
             "Particles",
-            "Clean glass",
-            "Matrix deep"
+            "Clean glass"
           ]
         },
         {
@@ -428,43 +426,6 @@
           "max": 1.0,
           "step": 0.01,
           "default": 0.3
-        },
-        {
-          "key": "charset",
-          "label": "Glyphs",
-          "kind": "select",
-          "default": 0,
-          "options": [
-            "Matrix",
-            "Binary",
-            "Braille",
-            "Runes",
-            "Technical"
-          ]
-        },
-        {
-          "key": "rain",
-          "label": "Room rain",
-          "min": 0.0,
-          "max": 1.5,
-          "step": 0.01,
-          "default": 0.32
-        },
-        {
-          "key": "faceRain",
-          "label": "Face rain",
-          "min": 0.0,
-          "max": 6.0,
-          "step": 0.01,
-          "default": 2.6
-        },
-        {
-          "key": "rainSpeed",
-          "label": "Rain speed",
-          "min": 0.3,
-          "max": 2.2,
-          "step": 0.01,
-          "default": 1.0
         }
       ]
     },
