@@ -320,11 +320,19 @@
     buf: document.createElement('canvas'),
     c: null,
     atlas: document.createElement('canvas'),
+    headAtlas: document.createElement('canvas'),
     ac: null,
     glyphW: 16, glyphH: 22, count: 44,
     cols: [], w: 0, h: 0, ready: false, phase: 0,
   };
-  const GLYPHS = 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホ0123456789ABCDEF<>[]{}/\\|=+*';
+  const GLYPH_SETS = [
+    'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワン0123456789ABCDEF<>[]{}/\\|=+*',
+    '01',
+    '⠁⠂⠃⠄⠅⠆⠇⠈⠉⠊⠋⠌⠍⠎⠏⠐⠑⠒⠓⠔⠕⠖⠗⠘⠙⠚⠛⠜⠝⠞⠟⡀⡁⡂⡃⡄⡅⡆⡇⣀⣁⣂⣃⣄⣅⣆⣇⣿',
+    'ᚠᚡᚢᚣᚤᚥᚦᚧᚨᚩᚪᚫᚬᚭᚮᚯᚰᚱᚲᚳᚴᚵᚶᚷᚸᚹᚺᚻᚼᚽᚾᚿᛀᛁᛂᛃᛄᛅᛆᛇᛈᛉᛊᛋᛌᛍᛎᛏᛐᛑᛒᛓ',
+    '⎔⎕⌁⌂⌃⌄⌅⌆⌇⌈⌉⌊⌋⌌⌍⌎⌏⌐⌑⌒⌓⌔⌕⌖⌗⌘⌙⌚⌛⌜⌝⌞⌟⌠⌡⌢⌣⌤⌥⌦⌧⌨〈〉⌫⌬',
+  ];
+  const glyphSet = () => GLYPH_SETS[clamp(Math.round(P.charset ?? 0), 0, GLYPH_SETS.length - 1)];
 
   function buildRain() {
     RAIN.w = Math.round(VW);
@@ -334,21 +342,22 @@
     RAIN.c = RAIN.buf.getContext('2d');
     RAIN.c.clearRect(0, 0, RAIN.w, RAIN.h);
 
-    // glyph atlas in the current palette colour
+    // two atlases: body glyphs in the palette colour, and a near-white head set
+    // so the leading character of every column burns brighter than its trail
     const gw = RAIN.glyphW, gh = RAIN.glyphH;
-    RAIN.atlas.width = gw * RAIN.count;
-    RAIN.atlas.height = gh;
-    const a = RAIN.atlas.getContext('2d');
-    a.clearRect(0, 0, RAIN.atlas.width, gh);
-    a.font = `500 ${Math.round(gh * 0.78)}px "JetBrainsMono Nerd Font", monospace`;
-    a.textAlign = 'center';
-    a.textBaseline = 'middle';
-    a.fillStyle = rgba(COL.main, 1);
-    for (let i = 0; i < RAIN.count; i++) {
-      const ch = GLYPHS[(i * 7 + 3) % GLYPHS.length];
-      a.fillText(ch, i * gw + gw / 2, gh * 0.54);
+    const fonts = `500 ${Math.round(gh * 0.78)}px "JetBrainsMono Nerd Font", monospace`;
+    for (const [canvas, colour] of [[RAIN.atlas, rgba(COL.main, 1)], [RAIN.headAtlas, rgba(COL.core, 1)]]) {
+      canvas.width = gw * RAIN.count;
+      canvas.height = gh;
+      const a = canvas.getContext('2d');
+      a.clearRect(0, 0, canvas.width, gh);
+      a.font = fonts;
+      a.textAlign = 'center';
+      a.textBaseline = 'middle';
+      a.fillStyle = colour;
+      const set = glyphSet();
+      for (let i = 0; i < RAIN.count; i++) a.fillText(set[(i * 7 + 3) % set.length], i * gw + gw / 2, gh * 0.54);
     }
-    RAIN.ac = a;
 
     const cols = Math.max(24, Math.round(VW / gw));
     RAIN.cols = [];
@@ -358,7 +367,7 @@
         y: rnd(-VH, VH),
         sp: rnd(55, 170),
         b: rnd(0.35, 1),
-        g: Math.floor(Math.random() * RAIN.count),
+        cell: -1,
       });
     }
     RAIN.ready = true;
@@ -380,15 +389,20 @@
         col.y = -rnd(40, VH * 0.9);
         col.sp = rnd(55, 170);       // px per second
         col.b = rnd(0.35, 1);
+        col.cell = -1;
       }
-      if (col.y < -gh) continue;
-      const gi = Math.floor(Math.random() * RAIN.count);
-      c.globalAlpha = Math.min(1, col.b * 1.18);
-      c.drawImage(RAIN.atlas, gi * gw, 0, gw, gh, Math.round(col.x), Math.round(col.y), gw, gh);
-      // a brighter head glyph, the classic matrix tick
-      c.globalAlpha = Math.min(1, col.b + 0.45);
-      c.fillStyle = rgba(COL.core, 0.9);
-      c.fillRect(Math.round(col.x + gw * 0.25), Math.round(col.y + gh * 0.86), Math.round(gw * 0.5), 2);
+      const cell = Math.floor(col.y / gh);
+      if (cell !== col.cell) {
+        // one glyph per cell, so the trail is discrete characters, not a smear
+        col.cell = cell;
+        const gi = Math.floor(Math.random() * RAIN.count);
+        c.globalAlpha = Math.min(1, col.b);
+        c.drawImage(RAIN.atlas, gi * gw, 0, gw, gh, Math.round(col.x), cell * gh, gw, gh);
+      }
+      // the head itself, brighter and slightly behind the leading cell
+      const hi = Math.floor(Math.random() * RAIN.count);
+      c.globalAlpha = Math.min(1, 0.55 + col.b * 0.45);
+      c.drawImage(RAIN.headAtlas, hi * gw, 0, gw, gh, Math.round(col.x), Math.round(col.y), gw, gh);
     }
     c.globalAlpha = 1;
   }
@@ -1168,7 +1182,7 @@
     }
     // tip light
     const tg2 = ctx.createRadialGradient(ux(0), vy(vTip - 0.014), 1, ux(0), vy(vTip - 0.014), dU(wA * 0.55));
-    tg2.addColorStop(0, rgba(COL.core, 0.22 * shade * glow));
+    tg2.addColorStop(0, rgba(COL.core, 0.13 * shade * glow));
     tg2.addColorStop(1, rgba(COL.main, 0));
     ctx.fillStyle = tg2;
     ctx.fillRect(ux(-wA), vy(vTip - 0.05), dU(wA * 2), dV(0.07));

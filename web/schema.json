@@ -403,6 +403,19 @@
           "default": 0.3
         },
         {
+          "key": "charset",
+          "label": "Glyphs",
+          "kind": "select",
+          "default": 0,
+          "options": [
+            "Matrix",
+            "Binary",
+            "Braille",
+            "Runes",
+            "Technical"
+          ]
+        },
+        {
           "key": "rain",
           "label": "Room rain",
           "min": 0.0,
