@@ -171,6 +171,7 @@
     blink: 0, blinkPhase: 0, nextBlink: 2.4, doubleBlink: 0, blinks: 0,
     gazeX: 0, gazeY: 0, tgx: 0, tgy: 0, nextSaccade: 2.0,
     browL: 0, browR: 0, browTL: 0, browTR: 0, nextBrow: 2.2, flash: 0, nextFlash: 6,
+    nostril: 0, nextNostril: 3, earL: 0, earR: 0, nextEar: 4, earSign: 1,
     aperture: 0,
     amp: 0,
     breath: 0,
@@ -222,6 +223,28 @@
     }
     S.browL = approach(S.browL, S.browTL, 4.5, dt);
     S.browR = approach(S.browR, S.browTR, 4.5, dt);
+    // nostrils: they ride the breath, and flare now and then on their own
+    const nf = P.nostrilFlare ?? 0.6;
+    S.nextNostril -= dt;
+    let nTarget = 0.14 + 0.20 * (0.5 + 0.5 * Math.sin(t * 0.9)) + 0.22 * S.listen;
+    if (S.aperture > 0.05) nTarget += 0.25 * S.aperture;
+    if (S.nextNostril <= 0) { S.nextNostril = rnd(2.2, 6.8); S.burst = 1; }
+    S.burst = approach(S.burst || 0, 0, 3.2, dt);   // a flare lasts ~0.3 s, not one frame
+    nTarget += 0.85 * (S.burst || 0);
+    S.nostril = approach(S.nostril, nTarget * nf, 9, dt);
+
+    // ears: a small independent twitch, one side at a time
+    const em = P.earMotion ?? 0.5;
+    S.nextEar -= dt;
+    if (S.nextEar <= 0) {
+      S.nextEar = rnd(2.2, 7.0);
+      S.earSign = Math.random() < 0.5 ? -1 : 1;
+      if (S.earSign > 0) S.earR = 1; else S.earL = 1;
+    }
+    S.earL = approach(S.earL, 0, 3.4, dt);
+    S.earR = approach(S.earR, 0, 3.4, dt);
+    S.earAmt = em;
+
     S.nextFlash -= dt;
     if (S.nextFlash <= 0) {
       S.nextFlash = rnd(5.0, 15.0);
@@ -629,9 +652,10 @@
       const x = ux(side * halfWidth(midV)) + side * dU(0.010 * out);
       const cyE = vy(midV);
 
+      const tw = side < 0 ? S.earL : S.earR;
       ctx.save();
-      ctx.translate(x, cyE);
-      ctx.rotate(-(P.earTilt ?? 0.1) * side);
+      ctx.translate(x + side * dU(0.004) * tw, cyE - dV(0.006) * tw);
+      ctx.rotate(-((P.earTilt ?? 0.1) + 0.10 * tw * side));
       ctx.scale(side, 1);
 
       // shell
@@ -1179,11 +1203,22 @@
     // nostrils
     const nost = P.nostril ?? 0.55;
     if (nost > 0.02) {
+      const flare = 1 + 0.55 * S.nostril;          // breathing + the odd flare
       ctx.fillStyle = `rgba(0,4,6,${0.55 * nost})`;
       for (const s of [-1, 1]) {
         ctx.beginPath();
-        ctx.ellipse(ux(s * wA * 0.60), vy(vTip + 0.020), dU(wA * 0.15), dV(0.006), s * 0.25, 0, TAU);
+        ctx.ellipse(ux(s * wA * 0.60 * (1 + 0.06 * S.nostril)), vy(vTip + 0.020),
+                    dU(wA * 0.15) * flare, dV(0.006) * (0.8 + 0.4 * S.nostril), s * 0.25, 0, TAU);
         ctx.fill();
+      }
+      // the wing lifts a touch as it flares
+      ctx.strokeStyle = rgba(COL.main, (0.26 + 0.10 * S.nostril) * shade);
+      for (const s of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(ux(s * wA * 0.44), vy(vTip - 0.006));
+        ctx.quadraticCurveTo(ux(s * wA * (1.00 + 0.06 * S.nostril)), vy(vTip - 0.002),
+                             ux(s * wA * 0.88), vy(vTip + 0.028 - 0.006 * S.nostril));
+        ctx.stroke();
       }
     }
     ctx.restore();
@@ -1423,6 +1458,7 @@
     get stats() {
       return { fps: S.fps, state: S.state, aperture: S.aperture, head: { ...HEAD },
                blinks: S.blinks, blink: S.blink, browL: S.browL, browR: S.browR,
+               nostril: S.nostril, earL: S.earL, earR: S.earR,
                gazeX: S.gazeX, gazeY: S.gazeY, smile: P.smile };
     },
   };
