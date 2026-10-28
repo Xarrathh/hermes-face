@@ -98,6 +98,7 @@
     layout();
     rebuildGeometry();
     buildRain();
+    buildRoom();
     buildMotes();
   }
 
@@ -418,6 +419,67 @@
     ctx.restore();
   }
 
+  /* ---------------------------------------------------------------- room rain */
+  // The room gets its own buffer: short trails and a wider spacing, so it reads as
+  // sparse falling characters instead of the face layer's long trails drawn dim --
+  // that veil is what looked like a ghost of the matrix.
+  const ROOM = {
+    cv: document.createElement('canvas'), c: null, cols: [],
+    w: 0, h: 0, gw: 14, gh: 20, ready: false, lastCell: 0,
+  };
+
+  function buildRoom() {
+    ROOM.w = Math.round(VW);
+    ROOM.h = Math.round(VH);
+    ROOM.cv.width = ROOM.w;
+    ROOM.cv.height = ROOM.h;
+    ROOM.c = ROOM.cv.getContext('2d');
+    ROOM.c.clearRect(0, 0, ROOM.w, ROOM.h);
+    ROOM.cols = [];
+    const spacing = 30;
+    for (let x = 0; x < ROOM.w; x += spacing) {
+      ROOM.cols.push({ x, y: rnd(-VH, VH), sp: rnd(40, 120), b: rnd(0.30, 0.85), cell: -1 });
+    }
+    ROOM.ready = true;
+  }
+
+  function stepRoom(dt, speed) {
+    if (!ROOM.ready || !RAIN.atlas) return;
+    const c = ROOM.c;
+    c.globalCompositeOperation = 'destination-out';
+    c.fillStyle = 'rgba(0,0,0,0.075)';
+    c.fillRect(0, 0, ROOM.w, ROOM.h);
+    c.globalCompositeOperation = 'source-over';
+    const { gw, gh } = ROOM;
+    for (const col of ROOM.cols) {
+      col.y += col.sp * speed * dt;
+      if (col.y > ROOM.h + gh) {
+        col.y = -rnd(60, VH * 0.7);
+        col.sp = rnd(40, 120);
+        col.b = rnd(0.30, 0.85);
+        col.cell = -1;
+      }
+      const cell = Math.floor(col.y / gh);
+      if (cell !== col.cell) {
+        col.cell = cell;
+        const gi = Math.floor(Math.random() * RAIN.count);
+        c.globalAlpha = col.b;
+        c.drawImage(RAIN.atlas, gi * RAIN.glyphW, 0, RAIN.glyphW, RAIN.glyphH,
+                    Math.round(col.x), cell * gh, gw, gh);
+      }
+    }
+    c.globalAlpha = 1;
+  }
+
+  function drawRoom(alpha) {
+    if (!ROOM.ready || alpha <= 0.01) return;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = Math.min(1, alpha);
+    ctx.drawImage(ROOM.cv, 0, 0);
+    ctx.restore();
+  }
+
   /* ---------------------------------------------------------------- face effects */
   // Effect 0 is the code rain (drawn below); 1 is the old latitude/longitude shell,
   // 2 is drifting motes, 3 is bare glass.
@@ -527,7 +589,7 @@
         ctx.drawImage(RAIN.buf, 0, 0);
         ctx.restore();
       }
-      drawRain(rain);
+      drawRoom(rain);
     }
 
     // horizon glow, so the rain has a floor to stand on
@@ -835,10 +897,12 @@
 
     // dark glass body: the head occludes the room behind it
     const bg = ctx.createRadialGradient(cx - dU(0.16), vy(0.34), dU(0.03), cx, vy(0.52), dU(1.15));
-    bg.addColorStop(0, `rgba(10,44,56,${0.34 + 0.26 * fill})`);
-    bg.addColorStop(0.45, `rgba(6,26,34,${0.38 + 0.30 * fill})`);
-    bg.addColorStop(0.82, `rgba(3,14,19,${0.48 + 0.30 * fill})`);
-    bg.addColorStop(1, `rgba(2,9,13,${0.56 + 0.28 * fill})`);
+    // dark but opaque: the head must occlude the room, or the rain shows through it and
+    // the face reads as a ghost standing in front of the code
+    bg.addColorStop(0, 'rgba(7,26,34,1)');
+    bg.addColorStop(0.45, 'rgba(5,18,24,1)');
+    bg.addColorStop(0.82, 'rgba(3,11,15,1)');
+    bg.addColorStop(1, 'rgba(2,8,11,1)');
     ctx.fillStyle = bg;
     ctx.fillRect(ux(-1.1), vy(-0.1), dU(2.2), dV(1.2));
 
@@ -1512,6 +1576,7 @@
 
     updateSenses(dt, t);
     rainStep(dt, (P.rainSpeed ?? 1));
+    stepRoom(dt, (P.rainSpeed ?? 1));
 
     drawBackdrop(t);
 
@@ -1590,10 +1655,12 @@
     if (COL.main.join() !== hueBefore || COL.core.join() !== satBefore) {
       buildRain();
       RAIN.c.clearRect(0, 0, RAIN.w, RAIN.h);
+      buildRoom();
     }
     layout();
     rebuildGeometry();
     buildRain();
+    buildRoom();
     buildMotes();
   }
 
