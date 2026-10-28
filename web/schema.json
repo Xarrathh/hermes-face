@@ -90,7 +90,10 @@
             "Straight",
             "Widow's peak",
             "Receding",
-            "Sweep"
+            "Sweep",
+            "M-shape",
+            "Rounded",
+            "Jagged"
           ],
           "default": 2
         },

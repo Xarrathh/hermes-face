@@ -790,7 +790,7 @@
     // Hairline shape and darkness are independent of the hair itself, so a bald head can
     // still carry a hairline (a shaved edge) and any style's edge can be pushed darker
     // without adding mass.
-    const edge = clamp(Math.round(P.hairEdge ?? 2), 0, 4);
+    const edge = clamp(Math.round(P.hairEdge ?? 2), 0, 7);
     const dark = clamp(P.hairDark ?? 1, 0, 2);
     const bald = style === 0;
     if (bald && (edge === 0 || dark < 0.02)) return;
@@ -806,6 +806,11 @@
       if (edge === 1) return hv - 0.004 + 0.010 * k * k;       // straight: even, flat arc
       if (edge === 3) return hv - 0.044 * Math.pow(k, 1.45) + 0.014 * (1 - k); // receding: temples pulled back
       if (edge === 4) return hv + 0.034 * (uu / Math.max(1e-6, hwH)) - 0.008;  // sweep: one side lower
+      if (edge === 5)                                                          // M-shape: peak plus receded temples
+        return hv + 0.008 - 0.034 * Math.pow(k, 1.5) - 0.026 * Math.exp(-Math.pow(uu / (hwH * 0.22), 2));
+      if (edge === 6) return hv - 0.004 - 0.028 * Math.pow(k, 0.7);            // rounded: domed, high at the temples
+      if (edge === 7)                                                          // jagged: a slightly uneven edge, no crawl
+        return hv + 0.005 * Math.sin(uu * 41.3) + 0.004 * Math.cos(uu * 67.7) - 0.004;
       // widow's peak: a pronounced dip at the centre, rising toward the temples
       return hv - 0.008 + 0.026 * Math.pow(k, 1.2) - 0.030 * Math.exp(-Math.pow(uu / (hwH * 0.20), 2));
     };
@@ -878,7 +883,7 @@
     // ---- the hairline band itself: a soft dark edge along the curve, on any head.
     // A fill with a gradient, never a stroke: this is the "hairline without hair".
     if (edge !== 0 && dark > 0.02) {
-      const thick = (uu) => dV(0.020 + 0.012 * (1 - Math.abs(uu) / Math.max(1e-6, hwH)));
+      const thick = (uu) => dV(0.030 + 0.014 * (1 - Math.abs(uu) / Math.max(1e-6, hwH)));
       const band = new Path2D();
       band.moveTo(ux(-hwH), vy(edgeY(-hwH)));
       for (let i = 1; i <= 56; i++) {
@@ -890,12 +895,17 @@
         band.lineTo(ux(uu), vy(edgeY(uu)) - thick(uu));
       }
       band.closePath();
-      const top = vy(hv - 0.03), bot = vy(hv + 0.03);
+      // dark AT the hairline and fading UP into the scalp: a band that fades the other
+      // way puts its hard edge on the wrong side and reads as a shadow under a cap
+      // the gradient has to END on the curve itself: spanning a fixed +-0.06 band put its
+      // darkest stop below the hairline and every shape dissolved into the same smudge
+      const top = vy(hv - 0.05), bot = vy(hv + 0.002);
       const bg2 = ctx.createLinearGradient(0, top, 0, bot);
-      const a = (bald ? 0.34 : 0.26) * dark * (bald ? 1 : Math.min(1, hair + 0.35));
-      bg2.addColorStop(0, `rgba(2,9,13,${Math.min(1, a * 1.15)})`);
-      bg2.addColorStop(0.55, `rgba(2,9,13,${Math.min(1, a)})`);
-      bg2.addColorStop(1, 'rgba(2,9,13,0)');
+      const a = (bald ? 0.55 : 0.42) * dark * (bald ? 1 : Math.min(1, hair + 0.35));
+      bg2.addColorStop(0, 'rgba(2,9,13,0)');
+      bg2.addColorStop(0.55, `rgba(2,9,13,${Math.min(1, a * 0.30)})`);
+      bg2.addColorStop(0.85, `rgba(2,9,13,${Math.min(1, a * 0.75)})`);
+      bg2.addColorStop(1, `rgba(2,9,13,${Math.min(1, a)})`);
       ctx.fillStyle = bg2;
       ctx.fill(band);
     }
