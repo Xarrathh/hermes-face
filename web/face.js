@@ -816,7 +816,7 @@
     if (RAIN.ready) {
       // transparency * faceRain = how much code the face carries; whole passes stack,
       // so the top of the slider is genuinely brighter instead of clamping at 1
-      const total = Math.max(0, (P.faceRain ?? 2.6) * (P.transparency ?? 0.9));
+      const total = Math.max(0, P.faceRain ?? 2.6);
       if (total > 0.02) {
         ctx.save();
         ctx.clip(hp);
@@ -1118,6 +1118,8 @@
     g.addColorStop(0, rgba(COL.main, 0.50));
     g.addColorStop(0.55, rgba(COL.main, 0.76));
     g.addColorStop(1, rgba(COL.dim, 0.34));
+    ctx.fillStyle = 'rgba(2,8,12,0.85)';
+    ctx.fill();
     ctx.fillStyle = g;
     ctx.shadowColor = rgba(COL.main, 0.65);
     ctx.shadowBlur = 12 * glow;
@@ -1134,6 +1136,20 @@
     const glow = P.glow ?? 1;
 
     ctx.save();
+    // the nose as a mass, not a line drawing: a soft dark form the rain cannot read through
+    const mass = new Path2D();
+    mass.moveTo(ux(-wA * 0.26), vy(vRoot));
+    mass.quadraticCurveTo(ux(-wA * 0.36), vy((vRoot + vTip) * 0.5), ux(-wA * 0.86), vy(vTip + 0.014));
+    mass.quadraticCurveTo(ux(0), vy(vTip + 0.046), ux(wA * 0.86), vy(vTip + 0.014));
+    mass.quadraticCurveTo(ux(wA * 0.36), vy((vRoot + vTip) * 0.5), ux(wA * 0.26), vy(vRoot));
+    mass.closePath();
+    const mg = ctx.createLinearGradient(0, vy(vRoot), 0, vy(vTip + 0.04));
+    mg.addColorStop(0, 'rgba(2,8,12,0.18)');
+    mg.addColorStop(0.6, 'rgba(2,8,12,0.55)');
+    mg.addColorStop(1, 'rgba(2,8,12,0.72)');
+    ctx.fillStyle = mg;
+    ctx.fill(mass);
+
     // shadow on the far side of the bridge
     const ns = ctx.createLinearGradient(ux(0), vy(vRoot), ux(wA * 0.9), vy(vTip));
     ns.addColorStop(0, 'rgba(0,4,7,0)');
@@ -1265,7 +1281,15 @@
       ctx.fillRect(-mw * 1.5, yc - hgt, mw * 3, hgt * 2);
     }
 
-    // lip body
+    // lip body: an opaque dark base first, so the rain stops at the mouth
+    ctx.beginPath();
+    ctx.moveTo(-mwS, cornerY);
+    for (let i = 1; i <= N; i++) { const x = xAt(i); ctx.lineTo(x, upper(x)); }
+    for (let i = N; i >= 0; i--) { const x = xAt(i); ctx.lineTo(x, lower(x)); }
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(2,8,12,0.92)';
+    ctx.fill();
+
     ctx.beginPath();
     ctx.moveTo(-mwS, cornerY);
     for (let i = 1; i <= N; i++) { const x = xAt(i); ctx.lineTo(x, upper(x)); }
@@ -1412,6 +1436,8 @@
     ctx.save();
     ctx.clip(hp);
     if (!OFF.has('hair')) drawHairSides();
+    // Transparency is the features' own alpha, not the rain's
+    ctx.globalAlpha = clamp(P.transparency ?? 1, 0, 1);
     if (!OFF.has('eyes')) { drawEye(-1, t); drawEye(1, t); }
     if (!OFF.has('brows')) { drawBrow(-1); drawBrow(1); }
     if (!OFF.has('nose')) drawNose();
