@@ -369,6 +369,18 @@
       "label": "Hologram",
       "params": [
         {
+          "key": "effect",
+          "label": "Effect",
+          "kind": "select",
+          "default": 0,
+          "options": [
+            "Code rain",
+            "Wireframe",
+            "Particles",
+            "Clean glass"
+          ]
+        },
+        {
           "key": "hue",
           "label": "Hue",
           "min": 0,

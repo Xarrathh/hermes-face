@@ -98,6 +98,7 @@
     layout();
     rebuildGeometry();
     buildRain();
+    buildMotes();
   }
 
   /* ---------------------------------------------------------------- anatomy */
@@ -417,6 +418,91 @@
     ctx.restore();
   }
 
+  /* ---------------------------------------------------------------- face effects */
+  // Effect 0 is the code rain (drawn below); 1 is the old latitude/longitude shell,
+  // 2 is drifting motes, 3 is bare glass.
+  const MOTES = { list: [], ready: false };
+
+  function buildMotes() {
+    MOTES.list = [];
+    const n = 90;
+    for (let i = 0; i < n; i++) {
+      MOTES.list.push({
+        u: rnd(-0.95, 0.95), v: rnd(0.04, 0.98),
+        r: rnd(0.6, 2.1), sp: rnd(0.010, 0.045), ph: rnd(0, TAU),
+      });
+    }
+    MOTES.ready = true;
+  }
+
+  function drawWire(hp, t) {
+    const glow = (P.glow ?? 1) * (0.4 + 0.6 * (P.faceRain ?? 2.6) / 3);
+    ctx.save();
+    ctx.clip(hp);
+    ctx.globalCompositeOperation = 'lighter';
+    const lat = 18;
+    for (let i = 1; i < lat; i++) {
+      const v = i / lat;
+      const hw = halfWidth(v) * 0.985;
+      const sag = dV(0.012) * (0.4 + 0.6 * Math.sin(Math.PI * v));
+      const g = ctx.createLinearGradient(ux(-hw), 0, ux(hw), 0);
+      g.addColorStop(0, rgba(COL.main, 0.02));
+      g.addColorStop(0.14, rgba(COL.main, 0.16 * glow));
+      g.addColorStop(0.5, rgba(COL.main, 0.06 * glow));
+      g.addColorStop(0.86, rgba(COL.main, 0.16 * glow));
+      g.addColorStop(1, rgba(COL.main, 0.02));
+      ctx.strokeStyle = g;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(ux(-hw), vy(v));
+      ctx.quadraticCurveTo(ux(0), vy(v) + sag, ux(hw), vy(v));
+      ctx.stroke();
+    }
+    for (let j = 1; j <= 7; j++) {
+      const u0 = Math.cos(Math.PI * j / 8);
+      ctx.beginPath();
+      for (let i = 0; i <= 44; i++) {
+        const v = i / 44;
+        const x = ux(u0 * halfWidth(v));
+        const y = vy(v);
+        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      }
+      ctx.strokeStyle = rgba(COL.main, 0.07 * glow);
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+    // a slow scan band, so a static shell still has life
+    const k = (t * 0.06) % 1;
+    const y = vy(0.02 + k * 0.96);
+    const sg = ctx.createLinearGradient(0, y - dV(0.05), 0, y + dV(0.02));
+    sg.addColorStop(0, rgba(COL.main, 0));
+    sg.addColorStop(0.8, rgba(COL.core, 0.18));
+    sg.addColorStop(1, rgba(COL.main, 0));
+    ctx.fillStyle = sg;
+    ctx.fillRect(ux(-1.05), y - dV(0.05), dU(2.1), dV(0.07));
+    ctx.restore();
+  }
+
+  function drawMotes(hp, t) {
+    if (!MOTES.ready) buildMotes();
+    const amt = Math.min(1.6, (P.faceRain ?? 2.6) / 2);
+    ctx.save();
+    ctx.clip(hp);
+    ctx.globalCompositeOperation = 'lighter';
+    for (const m of MOTES.list) {
+      const v = 0.98 - (((0.98 - m.v) + t * m.sp) % 0.96);     // drifts upward
+      const hw = halfWidth(v) * 0.94;
+      const x = ux(m.u * hw);
+      const y = vy(v);
+      const a = (0.25 + 0.35 * (0.5 + 0.5 * Math.sin(t * 1.7 + m.ph))) * amt;
+      ctx.fillStyle = rgba(COL.main, a);
+      ctx.beginPath();
+      ctx.arc(x, y, m.r, 0, TAU);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
   /* ---------------------------------------------------------------- backdrop */
   function drawBackdrop(t) {
     const bg = ctx.createRadialGradient(VW * 0.5, VH * 0.42, 0, VW * 0.5, VH * 0.52, Math.max(VW, VH) * 0.78);
@@ -426,9 +512,9 @@
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, VW, VH);
 
-    // the room is the same code, further away
+    // the room carries the same code when code is the effect; otherwise it stays dim
     const rain = P.rain ?? 0.32;
-    drawRain(rain);
+    if ((P.effect ?? 0) === 0) drawRain(rain);
 
     // horizon glow, so the rain has a floor to stand on
     const horizon = VH * 0.80;
@@ -645,8 +731,8 @@
       const u = i / 9.6;
       const x = ux(u * hwH * 0.96);
       const drop = (0.030 + 0.022 * Math.cos(u * Math.PI * 0.9)) * (0.5 + 0.5 * hair);
-      ctx.strokeStyle = rgba(COL.main, 0.26 * hair);
-      ctx.lineWidth = 1.2;
+      ctx.strokeStyle = rgba(COL.main, 0.14 * hair);
+      ctx.lineWidth = 1.1;
       ctx.beginPath();
       ctx.moveTo(x, vy(hv - 0.012));
       ctx.quadraticCurveTo(x * 1.004, vy(hv + drop * 0.6), x * 0.996, vy(hv + drop));
@@ -817,7 +903,10 @@
     if (RAIN.ready) {
       // transparency * faceRain = how much code the face carries; whole passes stack,
       // so the top of the slider is genuinely brighter instead of clamping at 1
-      const fr = Math.max(0, P.faceRain ?? 2.6);
+      const effect = clamp(Math.round(P.effect ?? 0), 0, 3);
+      if (effect === 1) drawWire(hp, t);
+      else if (effect === 2) drawMotes(hp, t);
+      const fr = effect === 0 ? Math.max(0, P.faceRain ?? 2.6) : 0;
       if (fr > 0.02) {
         // Source-over, so the code keeps its hue at full strength. Additive stacking
         // is what turned the face white: six passes of any colour clip to white.
@@ -1478,6 +1567,7 @@
     layout();
     rebuildGeometry();
     buildRain();
+    buildMotes();
   }
 
   window.__face = {
