@@ -781,80 +781,6 @@
 
   // Hair that frames the face: a band along each side, kept inside the head
   // outline so nothing wraps around the skull.
-  // Drawn OUTSIDE the head fill, after the shell. Fills only — no strokes anywhere: the
-  // hair is a shadow on this face, and a stroked strand or a lit hairline reads as a line
-  // drawn on the hologram rather than as hair. Shapes tell the story, tone alone.
-  function drawHairSides() {
-    const style = hairStyle();
-    const hair = P.hair ?? 0.85;
-    if (hair < 0.02) return;
-    if (style !== 3 && style !== 4) return;         // Side part, Topknot
-    const vol = P.hairVolume ?? 1;
-    const vEnd = style === 3 ? 0.92 : 0.58;
-    const mass = style === 3 ? 0.92 : 0.55;
-    const hwAt = (v) => halfWidth(Math.min(v, 1)) * (v > 1 ? 1 + 0.42 * (v - 1) : 1);
-
-    for (const sgn of [-1, 1]) {
-      const flare = (v) => {
-        const tt = clamp(v / vEnd, 0, 1);
-        return 0.30 * mass * vol * Math.sin(Math.min(1, tt * 1.15) * Math.PI * 0.5);
-      };
-      const outer = (v) => hwAt(v) * (1 + flare(v));
-      const inner = (v) => {
-        const tt = clamp(v / vEnd, 0, 1);
-        const band = (0.40) * Math.pow(tt, 0.5);
-        return hwAt(v) * clamp(1 - band, 0.28, 0.985);
-      };
-
-      const N = 26;
-      const body = new Path2D();
-      body.moveTo(ux(0), vy(0));
-      for (let i = 1; i <= N; i++) {
-        const v = vEnd * (i / N);
-        body.lineTo(ux(sgn * outer(v)), vy(v));
-      }
-      body.quadraticCurveTo(ux(sgn * (outer(vEnd) + inner(vEnd)) * 0.5), vy(vEnd + 0.012),
-                            ux(sgn * inner(vEnd)), vy(vEnd));
-      for (let i = N - 1; i >= 0; i--) {
-        const v = vEnd * (i / N);
-        body.lineTo(ux(sgn * inner(v)), vy(v));
-      }
-      body.closePath();
-
-      const g = ctx.createLinearGradient(ux(sgn * outer(vEnd * 0.55)), 0, ux(sgn * inner(vEnd * 0.75)), 0);
-      g.addColorStop(0, `rgba(7,32,42,${0.90 * hair})`);
-      g.addColorStop(0.62, `rgba(5,22,30,${0.74 * hair})`);
-      g.addColorStop(1, `rgba(3,12,17,${0.30 * hair})`);
-      ctx.fillStyle = g;
-      ctx.fill(body);
-
-      // six tonal locks: soft patches of shadow and lift inside the mass, no edges
-      const LOCKS = 6;
-      for (let k = 0; k < LOCKS; k++) {
-        const f0 = (k + 0.10) / LOCKS, f1 = (k + 0.96) / LOCKS;
-        const at = (v, f) => outer(v) + (inner(v) - outer(v)) * clamp(f, 0, 1);
-        const lockVEnd = vEnd * (0.86 + 0.14 * ((k * 0.37) % 1));
-        const lg = new Path2D();
-        lg.moveTo(ux(sgn * at(0, f0)), vy(0));
-        for (let i = 1; i <= 10; i++) {
-          const v = lockVEnd * (i / 10);
-          lg.lineTo(ux(sgn * at(v, f0 + 0.02 * (i / 10))), vy(v));
-        }
-        for (let i = 10; i >= 0; i--) {
-          const v = lockVEnd * (i / 10);
-          lg.lineTo(ux(sgn * at(v, f1 - 0.02 * (i / 10))), vy(v));
-        }
-        lg.closePath();
-        const lgl = ctx.createLinearGradient(ux(sgn * at(vEnd * 0.5, f0)), 0, ux(sgn * at(vEnd * 0.5, f1)), 0);
-        lgl.addColorStop(0, `rgba(9,40,52,${0.16 * hair})`);     // a little lift on the near side
-        lgl.addColorStop(0.55, 'rgba(0,0,0,0)');
-        lgl.addColorStop(1, `rgba(2,9,13,${0.22 * hair})`);      // and shadow in the gap
-        ctx.fillStyle = lgl;
-        ctx.fill(lg);
-      }
-    }
-  }
-
   // Drawn inside the head clip: the cap over the hairline, shaped per style.
   function drawHairFront() {
     const style = hairStyle();
@@ -868,17 +794,14 @@
     const partN = clamp(P.hairPart ?? 0.62, 0, 1);
     const partU = lerp(-0.30, 0.30, partN);
     const sweptLeft = partU >= 0;
-    const density = style === 4 ? hair * 0.75 : hair;
+    const density = hair;
 
     // the hairline, as the cap's own edge
     const line = new Path2D();
     line.moveTo(ux(-hwH), vy(hv - 0.012));
     if (style === 1) {                              // buzz: a high, even line
       line.quadraticCurveTo(ux(0), vy(hv - 0.060), ux(hwH), vy(hv - 0.012));
-    } else if (style === 3) {                       // side part: sweeps one way
-      line.bezierCurveTo(ux(-hwH * 0.34), vy(hv - 0.070),
-                         ux(hwH * 0.30), vy(hv + 0.020), ux(hwH), vy(hv + 0.028));
-    } else {                                        // short / topknot: widow's peak
+    } else {                                        // short: widow's peak
       line.quadraticCurveTo(ux(-hwH * 0.55), vy(hv + 0.030), ux(-hwH * 0.16), vy(hv + 0.006));
       line.quadraticCurveTo(ux(0), vy(hv - 0.004), ux(hwH * 0.16), vy(hv + 0.006));
       line.quadraticCurveTo(ux(hwH * 0.55), vy(hv + 0.030), ux(hwH), vy(hv - 0.012));
@@ -920,7 +843,7 @@
     ctx.save();
     ctx.clip(cap);
     const fr = new Path2D();
-    const lobes = style === 3 ? 1 : 2;
+    const lobes = style === 1 ? 1 : 2;
     const frTop = -0.02;
     const dipAt = (uu, q) => {
       const lw = Math.sin(q * Math.PI * lobes);
@@ -1787,7 +1710,6 @@
       ctx.restore();
     }
 
-    if (!OFF.has('hair')) drawHairSides();
 
     ctx.save();
     ctx.clip(hp);
