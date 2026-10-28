@@ -62,7 +62,6 @@
   /* ---------------------------------------------------------------- layout */
   const HEAD = { cx: 0, cy: 0, w: 0, h: 0 };
   let VW = 0, VH = 0, DPR = 1;
-  let dust = [];
 
   const ux = (u) => HEAD.cx + u * HEAD.w * 0.5;
   const vy = (v) => HEAD.cy + (v - 0.5) * HEAD.h;
@@ -97,15 +96,7 @@
     G.vignette = null;
     layout();
     rebuildGeometry();
-    buildDust();
-  }
-
-  function buildDust() {
-    dust = [];
-    const n = 70;
-    for (let i = 0; i < n; i++) {
-      dust.push({ x: rnd(0, VW), y: rnd(0, VH), r: rnd(0.5, 1.9), sp: rnd(3, 14), ph: rnd(0, TAU) });
-    }
+    buildRain();
   }
 
   /* ---------------------------------------------------------------- anatomy */
@@ -319,64 +310,121 @@
     return p;
   }
 
+  /* ---------------------------------------------------------------- code rain */
+  // One shared glyph buffer per frame, drawn twice: dim across the room, brighter
+  // inside the head so the face itself is made of falling code. A canvas buffer
+  // decays under a destination-out wash, so every glyph leaves its own trail.
+  const RAIN = {
+    buf: document.createElement('canvas'),
+    c: null,
+    atlas: document.createElement('canvas'),
+    ac: null,
+    glyphW: 16, glyphH: 22, count: 44,
+    cols: [], w: 0, h: 0, ready: false, phase: 0,
+  };
+  const GLYPHS = 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホ0123456789ABCDEF<>[]{}/\\|=+*';
+
+  function buildRain() {
+    RAIN.w = Math.round(VW);
+    RAIN.h = Math.round(VH);
+    RAIN.buf.width = RAIN.w;
+    RAIN.buf.height = RAIN.h;
+    RAIN.c = RAIN.buf.getContext('2d');
+    RAIN.c.clearRect(0, 0, RAIN.w, RAIN.h);
+
+    // glyph atlas in the current palette colour
+    const gw = RAIN.glyphW, gh = RAIN.glyphH;
+    RAIN.atlas.width = gw * RAIN.count;
+    RAIN.atlas.height = gh;
+    const a = RAIN.atlas.getContext('2d');
+    a.clearRect(0, 0, RAIN.atlas.width, gh);
+    a.font = `500 ${Math.round(gh * 0.78)}px "JetBrainsMono Nerd Font", monospace`;
+    a.textAlign = 'center';
+    a.textBaseline = 'middle';
+    a.fillStyle = rgba(COL.main, 1);
+    for (let i = 0; i < RAIN.count; i++) {
+      const ch = GLYPHS[(i * 7 + 3) % GLYPHS.length];
+      a.fillText(ch, i * gw + gw / 2, gh * 0.54);
+    }
+    RAIN.ac = a;
+
+    const cols = Math.max(24, Math.round(VW / gw));
+    RAIN.cols = [];
+    for (let i = 0; i < cols; i++) {
+      RAIN.cols.push({
+        x: i * gw + (gw - gw) / 2,
+        y: rnd(-VH, VH),
+        sp: rnd(55, 170),
+        b: rnd(0.35, 1),
+        g: Math.floor(Math.random() * RAIN.count),
+      });
+    }
+    RAIN.ready = true;
+  }
+
+  function rainStep(dt, speed) {
+    if (!RAIN.ready) return;
+    const c = RAIN.c;
+    // fade what is already there: this is what turns glyphs into trails
+    c.globalCompositeOperation = 'destination-out';
+    c.fillStyle = 'rgba(0,0,0,0.050)';
+    c.fillRect(0, 0, RAIN.w, RAIN.h);
+    c.globalCompositeOperation = 'source-over';
+
+    const gw = RAIN.glyphW, gh = RAIN.glyphH;
+    for (const col of RAIN.cols) {
+      col.y += col.sp * speed * dt;
+      if (col.y > RAIN.h + gh) {
+        col.y = -rnd(40, VH * 0.9);
+        col.sp = rnd(55, 170);       // px per second
+        col.b = rnd(0.35, 1);
+      }
+      if (col.y < -gh) continue;
+      const gi = Math.floor(Math.random() * RAIN.count);
+      c.globalAlpha = Math.min(1, col.b * 1.05);
+      c.drawImage(RAIN.atlas, gi * gw, 0, gw, gh, Math.round(col.x), Math.round(col.y), gw, gh);
+      // a brighter head glyph, the classic matrix tick
+      c.globalAlpha = Math.min(1, col.b + 0.35);
+      c.fillStyle = rgba(COL.core, 0.9);
+      c.fillRect(Math.round(col.x + gw * 0.25), Math.round(col.y + gh * 0.86), Math.round(gw * 0.5), 2);
+    }
+    c.globalAlpha = 1;
+  }
+
+  function drawRain(alpha, clipPath) {
+    if (!RAIN.ready || alpha <= 0.01) return;
+    ctx.save();
+    if (clipPath) ctx.clip(clipPath);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = Math.min(1, alpha);
+    ctx.drawImage(RAIN.buf, 0, 0);
+    ctx.restore();
+  }
+
   /* ---------------------------------------------------------------- backdrop */
   function drawBackdrop(t) {
     const bg = ctx.createRadialGradient(VW * 0.5, VH * 0.42, 0, VW * 0.5, VH * 0.52, Math.max(VW, VH) * 0.78);
-    bg.addColorStop(0, 'rgb(5,18,24)');
-    bg.addColorStop(0.5, 'rgb(2,10,14)');
+    bg.addColorStop(0, 'rgb(4,16,22)');
+    bg.addColorStop(0.5, 'rgb(2,9,13)');
     bg.addColorStop(1, 'rgb(1,4,6)');
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, VW, VH);
 
-    // floor: perspective grid, horizon glow
-    const grid = P.grid ?? 0.45;
+    // the room is code too, just further away
+    const rain = P.rain ?? 0.95;
+    drawRain(0.36 * rain);
+
+    // horizon glow, so the rain has a floor to stand on
     const horizon = VH * 0.80;
-    if (grid > 0.01) {
-      ctx.save();
-      ctx.globalCompositeOperation = 'lighter';
-      const hg = ctx.createLinearGradient(0, horizon - VH * 0.05, 0, horizon + VH * 0.10);
-      hg.addColorStop(0, rgba(COL.main, 0));
-      hg.addColorStop(0.5, rgba(COL.main, 0.10 * grid));
-      hg.addColorStop(1, rgba(COL.main, 0));
-      ctx.fillStyle = hg;
-      ctx.fillRect(0, horizon - VH * 0.05, VW, VH * 0.15);
-
-      ctx.strokeStyle = rgba(COL.main, 0.085 * grid);
-      ctx.lineWidth = 1;
-      for (let i = 0; i <= 14; i++) {
-        const k = i / 14;
-        const y = horizon + (VH - horizon) * k * k;
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(VW, y);
-        ctx.stroke();
-      }
-      const vpx = VW * 0.5;
-      for (let i = -14; i <= 14; i++) {
-        const xb = vpx + i * VW * 0.075;
-        ctx.beginPath();
-        ctx.moveTo(vpx + i * 6, horizon);
-        ctx.lineTo(xb, VH);
-        ctx.stroke();
-      }
-      ctx.restore();
-    }
-
-    // dust
-    const dm = P.dust ?? 0.6;
-    if (dm > 0.01) {
-      ctx.save();
-      ctx.globalCompositeOperation = 'lighter';
-      for (const d of dust) {
-        const y = ((d.y - t * d.sp) % VH + VH) % VH;
-        const a = (0.18 + 0.28 * (0.5 + 0.5 * Math.sin(t * 1.3 + d.ph))) * dm;
-        ctx.fillStyle = rgba(COL.main, a);
-        ctx.beginPath();
-        ctx.arc(d.x, y, d.r, 0, TAU);
-        ctx.fill();
-      }
-      ctx.restore();
-    }
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const hg = ctx.createLinearGradient(0, horizon - VH * 0.05, 0, horizon + VH * 0.10);
+    hg.addColorStop(0, rgba(COL.main, 0));
+    hg.addColorStop(0.5, rgba(COL.main, 0.06 * Math.min(1, rain)));
+    hg.addColorStop(1, rgba(COL.main, 0));
+    ctx.fillStyle = hg;
+    ctx.fillRect(0, horizon - VH * 0.05, VW, VH * 0.15);
+    ctx.restore();
   }
 
   /* ---------------------------------------------------------------- projector */
@@ -780,62 +828,16 @@
 
     drawHairFront();
 
-    const mesh = P.mesh ?? 1;
-    if (mesh > 0.01 && !OFF.has('mesh')) {
-      ctx.globalCompositeOperation = 'lighter';
-
-      // latitude lines, bowed as if wrapped on a surface
-      const lat = Math.max(4, Math.round(7 + 13 * mesh));
-      for (let i = 1; i < lat; i++) {
-        const v = i / lat;
-        const hw = halfWidth(v) * 0.985;
-        const sag = dV(0.012) * (0.4 + 0.6 * Math.sin(Math.PI * v));
-        const g = ctx.createLinearGradient(ux(-hw), 0, ux(hw), 0);
-        g.addColorStop(0, rgba(COL.main, 0.015));
-        g.addColorStop(0.14, rgba(COL.main, 0.13 * glow));
-        g.addColorStop(0.5, rgba(COL.main, 0.05 * glow));
-        g.addColorStop(0.86, rgba(COL.main, 0.13 * glow));
-        g.addColorStop(1, rgba(COL.main, 0.015));
-        ctx.strokeStyle = g;
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(ux(-hw), vy(v));
-        ctx.quadraticCurveTo(ux(0), vy(v) + sag, ux(hw), vy(v));
-        ctx.stroke();
-      }
-
-      // meridians, converging at crown and chin
-      const mer = Math.max(2, Math.round(3 + 5 * mesh));
-      for (let j = 1; j <= mer; j++) {
-        const u0 = Math.cos(Math.PI * j / (mer + 1));
-        ctx.beginPath();
-        for (let i = 0; i <= 44; i++) {
-          const v = i / 44;
-          const x = ux(u0 * halfWidth(v));
-          const y = vy(v);
-          i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-        }
-        ctx.strokeStyle = rgba(COL.main, 0.055 * glow);
-        ctx.lineWidth = 1;
-        ctx.stroke();
-      }
-
-      // mesh nodes
-      if (mesh > 0.35) {
-        const a = 0.20 * Math.min(1, (mesh - 0.35) * 3);
-        ctx.fillStyle = rgba(COL.core, a);
-        for (let j = 1; j <= mer; j++) {
-          const u0 = Math.cos(Math.PI * j / (mer + 1));
-          for (let i = 2; i < lat - 1; i++) {
-            const v = i / lat;
-            ctx.beginPath();
-            ctx.arc(ux(u0 * halfWidth(v) * 0.985), vy(v) + dV(0.012) * (1 - Math.abs(u0)) * Math.sin(Math.PI * v) * 0.9, 1.15, 0, TAU);
-            ctx.fill();
-          }
-        }
-      }
-      ctx.globalCompositeOperation = 'source-over';
-    }
+    // the face carries the same code, drawn tighter so it reads as surface
+    ctx.save();
+    ctx.clip(hp);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = Math.min(1, 1.10 * (P.rain ?? 0.95));
+    ctx.translate(HEAD.cx, HEAD.cy);
+    ctx.scale(0.86, 0.86);
+    ctx.translate(-HEAD.cx, -HEAD.cy);
+    ctx.drawImage(RAIN.buf, 0, 0);
+    ctx.restore();
 
     // scan band
     const scan = P.scan ?? 0.55;
@@ -1369,6 +1371,7 @@
     const t = S.t;
 
     updateSenses(dt, t);
+    rainStep(dt, (P.rainSpeed ?? 1));
 
     drawBackdrop(t);
 
@@ -1382,6 +1385,13 @@
 
     ctx.save();
     ctx.clip(hp);
+    // the middle of the face is quieter, so eyes/nose/mouth read through the code
+    const calm = ctx.createRadialGradient(ux(0), vy(0.62), dU(0.05), ux(0), vy(0.60), dU(0.56));
+    calm.addColorStop(0, 'rgba(2,10,14,0.46)');
+    calm.addColorStop(0.55, 'rgba(2,10,14,0.20)');
+    calm.addColorStop(1, 'rgba(2,10,14,0)');
+    ctx.fillStyle = calm;
+    ctx.fillRect(ux(-1), vy(0.10), dU(2), dV(0.85));
     if (!OFF.has('hair')) drawHairSides();
     if (!OFF.has('eyes')) { drawEye(-1, t); drawEye(1, t); }
     if (!OFF.has('brows')) { drawBrow(-1); drawBrow(1); }
@@ -1439,8 +1449,10 @@
 
   /* ---------------------------------------------------------------- api */
   function setParams(next) {
+    const hueBefore = COL.main.join(), satBefore = COL.core.join();
     P = Object.assign({}, P, next);
     palette();
+    if (COL.main.join() !== hueBefore || COL.core.join() !== satBefore) buildRain();
     layout();
     rebuildGeometry();
   }
