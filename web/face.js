@@ -803,6 +803,10 @@
     // the hairline curve: five shapes, all in v, all relative to the Hairline slider
     const edgeY = (uu) => {
       const k = Math.abs(uu) / Math.max(1e-6, hwH);          // 0 centre, 1 temple
+      // None is its own curve. It used to fall through to the widow's-peak branch, so
+      // choosing None gave a peaked cap edge with the softening band switched off --
+      // a hard-edged cap that looked like a bug, because it was one.
+      if (edge === 0) return hv - 0.002 + 0.006 * k * k;
       if (edge === 1) return hv - 0.004 + 0.010 * k * k;       // straight: even, flat arc
       if (edge === 3) return hv - 0.044 * Math.pow(k, 1.45) + 0.014 * (1 - k); // receding: temples pulled back
       if (edge === 4) return hv + 0.034 * (uu / Math.max(1e-6, hwH)) - 0.008;  // sweep: one side lower
@@ -830,7 +834,8 @@
       ctx.save();
       ctx.clip(cap);
       const g = ctx.createLinearGradient(0, vy(-0.02), 0, vy(hv + 0.04));
-      g.addColorStop(0, `rgba(6,26,34,${0.52 * density * dark * 0.7 + 0.18 * density})`);
+      const massDark = clamp(1 + 0.5 * (dark - 1), 0.6, 1.5);   // 2.0 must not blacken the crown
+      g.addColorStop(0, `rgba(6,26,34,${0.52 * density * massDark * 0.7 + 0.18 * density})`);
       g.addColorStop(0.55, `rgba(5,21,28,${0.40 * density})`);
       g.addColorStop(1, `rgba(4,16,20,${0.12 * density})`);
       ctx.fillStyle = g;
@@ -872,7 +877,7 @@
       fr.lineTo(ux(hwH), vy(frTop));
       fr.closePath();
       const fg = ctx.createLinearGradient(0, vy(frTop), 0, vy(hv + 0.05));
-      fg.addColorStop(0, `rgba(6,26,34,${0.60 * density * dark * 0.8})`);
+      fg.addColorStop(0, `rgba(6,26,34,${0.60 * density * massDark * 0.8})`);
       fg.addColorStop(0.7, `rgba(5,20,27,${0.44 * density})`);
       fg.addColorStop(1, `rgba(4,15,20,${0.10 * density})`);
       ctx.fillStyle = fg;
@@ -882,7 +887,7 @@
 
     // ---- the hairline band itself: a soft dark edge along the curve, on any head.
     // A fill with a gradient, never a stroke: this is the "hairline without hair".
-    if (edge !== 0 && dark > 0.02) {
+    if (dark > 0.02 && (edge !== 0 || !bald)) {
       const thick = (uu) => dV(0.030 + 0.014 * (1 - Math.abs(uu) / Math.max(1e-6, hwH)));
       const band = new Path2D();
       band.moveTo(ux(-hwH), vy(edgeY(-hwH)));
@@ -901,7 +906,10 @@
       // darkest stop below the hairline and every shape dissolved into the same smudge
       const top = vy(hv - 0.05), bot = vy(hv + 0.002);
       const bg2 = ctx.createLinearGradient(0, top, 0, bot);
-      const a = (bald ? 0.55 : 0.42) * dark * (bald ? 1 : Math.min(1, hair + 0.35));
+      // with None there is no shaped hairline, only a soft dissolve under the cap, so it
+      // gets a fraction of the darkness instead of a hard seam
+      const soft = edge === 0 ? 0.45 : 1;
+      const a = (bald ? 0.55 : 0.42) * dark * soft * (bald ? 1 : Math.min(1, hair + 0.35));
       bg2.addColorStop(0, 'rgba(2,9,13,0)');
       bg2.addColorStop(0.55, `rgba(2,9,13,${Math.min(1, a * 0.30)})`);
       bg2.addColorStop(0.85, `rgba(2,9,13,${Math.min(1, a * 0.75)})`);
