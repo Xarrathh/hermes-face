@@ -98,6 +98,7 @@
     layout();
     rebuildGeometry();
     buildMotes();
+    buildCircuit();
   }
 
   /* ---------------------------------------------------------------- anatomy */
@@ -309,6 +310,119 @@
     }
     p.closePath();
     return p;
+  }
+
+  /* ---------------------------------------------------------------- circuit */
+  // A board etched into the face: orthogonal and 45-degree traces inside the silhouette,
+  // pads at the bends, and electrons running along the copper.
+  const CIRCUIT = { traces: [], ready: false, glow: null };
+
+  function buildCircuit() {
+    CIRCUIT.traces = [];
+    const geo = headPath();
+    const scratch = document.createElement('canvas').getContext('2d');
+    const inside = (x, y) => scratch.isPointInPath(geo, x, y);
+    const dirs = [[0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1]];
+    const density = clamp(P.circuitDensity ?? 1, 0.2, 2.5);
+    const want = Math.round(34 * density);
+    let guard = 0;
+
+    while (CIRCUIT.traces.length < want && guard++ < want * 20) {
+      const u0 = rnd(-0.72, 0.72), v0 = rnd(0.10, 0.90);
+      if (!inside(ux(u0), vy(v0))) continue;
+      const pts = [[ux(u0), vy(v0)]];
+      let dir = Math.floor(Math.random() * 8);
+      const segs = 3 + Math.floor(Math.random() * 5);
+      for (let i = 0; i < segs; i++) {
+        const step = rnd(0.05, 0.15);
+        const [, ] = dirs[dir];
+        const nx = pts[pts.length - 1][0] + dU(dirs[dir][0] * step);
+        const ny = pts[pts.length - 1][1] + dV(dirs[dir][1] * step * 0.85);
+        if (!inside(nx, ny)) break;
+        pts.push([nx, ny]);
+        if (Math.random() < 0.55) dir = (dir + (Math.random() < 0.5 ? 1 : 7)) % 8;
+      }
+      if (pts.length < 3) continue;
+
+      let len = 0;
+      const acc = [0];
+      for (let i = 1; i < pts.length; i++) {
+        len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+        acc.push(len);
+      }
+      const nEl = 1 + Math.floor(Math.random() * 2);
+      const electrons = [];
+      for (let k = 0; k < nEl; k++) electrons.push({ s0: rnd(0, len), v: rnd(0.55, 1.35) });
+      CIRCUIT.traces.push({ pts, acc, len, electrons });
+    }
+
+    // a soft sprite for the electrons, built once per palette
+    const g = document.createElement('canvas');
+    g.width = g.height = 64;
+    const gc = g.getContext('2d');
+    const rg = gc.createRadialGradient(32, 32, 1, 32, 32, 32);
+    rg.addColorStop(0, rgba(COL.core, 1));
+    rg.addColorStop(0.25, rgba(COL.main, 0.85));
+    rg.addColorStop(1, rgba(COL.main, 0));
+    gc.fillStyle = rg;
+    gc.fillRect(0, 0, 64, 64);
+    CIRCUIT.glow = g;
+    CIRCUIT.ready = true;
+  }
+
+  function pointAt(trace, s) {
+    const { pts, acc } = trace;
+    let i = 1;
+    while (i < acc.length - 1 && acc[i] < s) i++;
+    const span = acc[i] - acc[i - 1] || 1;
+    const k = clamp((s - acc[i - 1]) / span, 0, 1);
+    return [pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * k,
+            pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * k];
+  }
+
+  function drawCircuit(hp, t) {
+    if (!CIRCUIT.ready) buildCircuit();
+    const glow = P.glow ?? 1;
+    const speed = P.electronSpeed ?? 1;
+    ctx.save();
+    ctx.clip(hp);
+
+    // traces
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    for (const tr of CIRCUIT.traces) {
+      ctx.strokeStyle = rgba(COL.main, 0.16 * glow);
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ctx.moveTo(tr.pts[0][0], tr.pts[0][1]);
+      for (let i = 1; i < tr.pts.length; i++) ctx.lineTo(tr.pts[i][0], tr.pts[i][1]);
+      ctx.stroke();
+      // pads at the bends
+      ctx.fillStyle = rgba(COL.main, 0.22 * glow);
+      for (const [x, y] of tr.pts) {
+        ctx.beginPath();
+        ctx.arc(x, y, 1.6, 0, TAU);
+        ctx.fill();
+      }
+    }
+
+    // electrons
+    for (const tr of CIRCUIT.traces) {
+      for (const e of tr.electrons) {
+        const sHead = (e.s0 + e.v * speed * 90 * t) % tr.len;
+        for (let k = 3; k >= 0; k--) {
+          const s2 = sHead - k * 3.2;
+          if (s2 < 0) continue;
+          const [x, y] = pointAt(tr, s2);
+          const r = k === 0 ? 5.5 : 4 - k * 0.6;
+          ctx.globalAlpha = k === 0 ? 0.95 : 0.30 * (1 - k / 4);
+          ctx.drawImage(CIRCUIT.glow, x - r, y - r, r * 2, r * 2);
+        }
+      }
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
   }
 
   /* ---------------------------------------------------------------- face effects */
@@ -792,9 +906,10 @@
     drawHairFront();
 
     // surface effect: the shell, motes, or nothing
-    const effect = clamp(Math.round(P.effect ?? 0), 0, 2);
+    const effect = clamp(Math.round(P.effect ?? 0), 0, 3);
     if (effect === 0) drawWire(hp, t);
     else if (effect === 1) drawMotes(hp, t);
+    else if (effect === 3) drawCircuit(hp, t);
 
     // scan band
     const scan = P.scan ?? 0.55;
@@ -1436,6 +1551,7 @@
     layout();
     rebuildGeometry();
     buildMotes();
+    buildCircuit();
   }
 
   window.__face = {
