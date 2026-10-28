@@ -781,38 +781,29 @@
 
   // Hair that frames the face: a band along each side, kept inside the head
   // outline so nothing wraps around the skull.
-  // Drawn OUTSIDE the head fill, after the shell. Two things killed the earlier versions:
-  // a band that only ever touched the silhouette's outside edge reads as a second, larger
-  // head outline ("aura", not hair), and a fill at 0.3 alpha lets the skull's own rim light
-  // shine through it, which is the double contour that makes it look like a wire cage.
-  // So: the band overlaps INWARD over the bone (hiding that rim), it is dense enough to be a
-  // mass, and it is made of locks rather than evenly spaced lines.
+  // Drawn OUTSIDE the head fill, after the shell. Fills only — no strokes anywhere: the
+  // hair is a shadow on this face, and a stroked strand or a lit hairline reads as a line
+  // drawn on the hologram rather than as hair. Shapes tell the story, tone alone.
   function drawHairSides() {
     const style = hairStyle();
     const hair = P.hair ?? 0.85;
     if (hair < 0.02) return;
-    if (style !== 4 && style !== 5 && style !== 8) return;
+    if (style !== 3 && style !== 4) return;         // Side part, Topknot
     const vol = P.hairVolume ?? 1;
-    const hv = P.hairline ?? 0.245;
-    const vEnd = style === 5 ? 1.16 : style === 4 ? 0.88 : 0.72;
-    const curly = style === 8;
-    const mass = style === 5 ? 1.0 : style === 4 ? 0.80 : 0.86;
+    const vEnd = style === 3 ? 0.92 : 0.58;
+    const mass = style === 3 ? 0.92 : 0.55;
     const hwAt = (v) => halfWidth(Math.min(v, 1)) * (v > 1 ? 1 + 0.42 * (v - 1) : 1);
 
     for (const sgn of [-1, 1]) {
       const flare = (v) => {
         const tt = clamp(v / vEnd, 0, 1);
-        const ramp = Math.sin(Math.min(1, tt * 1.15) * Math.PI * 0.5);
-        const wave = curly ? 0.05 * mass * vol * Math.sin(v * 40 + sgn * 1.7) : 0;
-        return Math.max(0, 0.30 * mass * vol * ramp + wave);
+        return 0.30 * mass * vol * Math.sin(Math.min(1, tt * 1.15) * Math.PI * 0.5);
       };
       const outer = (v) => hwAt(v) * (1 + flare(v));
-      // inner edge sits INSIDE the silhouette by a hair, so the shell's rim light is covered
       const inner = (v) => {
         const tt = clamp(v / vEnd, 0, 1);
-        const band = (style === 5 ? 0.40 : style === 4 ? 0.35 : 0.33) * Math.pow(tt, 0.5);
-        const clear = style === 5 ? 0.34 * Math.pow(clamp((v - 0.80) / 0.34, 0, 1), 1.3) : 0;
-        return hwAt(v) * clamp(1 - band + clear, 0.28, 0.985);
+        const band = (0.40) * Math.pow(tt, 0.5);
+        return hwAt(v) * clamp(1 - band, 0.28, 0.985);
       };
 
       const N = 26;
@@ -822,19 +813,14 @@
         const v = vEnd * (i / N);
         body.lineTo(ux(sgn * outer(v)), vy(v));
       }
-      // the cut: a bob ends in a blunt arc, long hair in tips
-      if (style === 4) body.quadraticCurveTo(ux(sgn * (outer(vEnd) + inner(vEnd)) * 0.5), vy(vEnd + 0.012),
-                                             ux(sgn * inner(vEnd)), vy(vEnd));
-      else body.quadraticCurveTo(ux(sgn * (outer(vEnd) + inner(vEnd)) * 0.5), vy(vEnd + 0.05),
-                                 ux(sgn * inner(vEnd)), vy(vEnd));
+      body.quadraticCurveTo(ux(sgn * (outer(vEnd) + inner(vEnd)) * 0.5), vy(vEnd + 0.012),
+                            ux(sgn * inner(vEnd)), vy(vEnd));
       for (let i = N - 1; i >= 0; i--) {
         const v = vEnd * (i / N);
         body.lineTo(ux(sgn * inner(v)), vy(v));
       }
       body.closePath();
 
-      // the mass. Dense at the outer edge, thinning toward the face, so the head's rim
-      // light no longer reads through it while the shell still shows where hair is thin.
       const g = ctx.createLinearGradient(ux(sgn * outer(vEnd * 0.55)), 0, ux(sgn * inner(vEnd * 0.75)), 0);
       g.addColorStop(0, `rgba(7,32,42,${0.90 * hair})`);
       g.addColorStop(0.62, `rgba(5,22,30,${0.74 * hair})`);
@@ -842,10 +828,10 @@
       ctx.fillStyle = g;
       ctx.fill(body);
 
-      // locks, not a comb: six tapered clumps, each with a lit leading edge
+      // six tonal locks: soft patches of shadow and lift inside the mass, no edges
       const LOCKS = 6;
       for (let k = 0; k < LOCKS; k++) {
-        const f0 = (k + 0.12) / LOCKS, f1 = (k + 0.94) / LOCKS;
+        const f0 = (k + 0.10) / LOCKS, f1 = (k + 0.96) / LOCKS;
         const at = (v, f) => outer(v) + (inner(v) - outer(v)) * clamp(f, 0, 1);
         const lockVEnd = vEnd * (0.86 + 0.14 * ((k * 0.37) % 1));
         const lg = new Path2D();
@@ -860,21 +846,11 @@
         }
         lg.closePath();
         const lgl = ctx.createLinearGradient(ux(sgn * at(vEnd * 0.5, f0)), 0, ux(sgn * at(vEnd * 0.5, f1)), 0);
-        lgl.addColorStop(0, rgba(COL.main, 0.10 * hair));
-        lgl.addColorStop(0.7, rgba(COL.main, 0.03 * hair));
-        lgl.addColorStop(1, 'rgba(0,0,0,0)');
+        lgl.addColorStop(0, `rgba(9,40,52,${0.16 * hair})`);     // a little lift on the near side
+        lgl.addColorStop(0.55, 'rgba(0,0,0,0)');
+        lgl.addColorStop(1, `rgba(2,9,13,${0.22 * hair})`);      // and shadow in the gap
         ctx.fillStyle = lgl;
         ctx.fill(lg);
-        // leading edge of the lock: this is the highlight that reads as a strand
-        ctx.strokeStyle = rgba(COL.main, (0.30 - 0.03 * k) * hair);
-        ctx.lineWidth = 1.1;
-        ctx.beginPath();
-        for (let i = 0; i <= 10; i++) {
-          const v = lockVEnd * (i / 10);
-          const x = ux(sgn * at(v, f0 + 0.02 * (i / 10)));
-          i ? ctx.lineTo(x, vy(v)) : ctx.moveTo(x, vy(v));
-        }
-        ctx.stroke();
       }
     }
   }
@@ -884,38 +860,25 @@
     const style = hairStyle();
     const hair = P.hair ?? 0.85;
     if (hair < 0.02) return;
-    if (style === 0) return;                       // bald
+    if (style === 0) return;                        // bald
     const hv = P.hairline ?? 0.245;
-    const glow = P.glow ?? 1;
     const hwH = halfWidth(hv) * 1.005;
-    const crest = style === 7;
-    // Part line: 0.5 is a centre parting; anything else puts it left or right of centre.
-    // The bigger half is the swept side. Declared here because the strand fan below
-    // radiates from the parting before the fringe is drawn.
+    // Parting: 0.5 is centre; the bigger half is the swept side. This is a *shape* — a
+    // dark scalp gap carved through the fringe — never a drawn line.
     const partN = clamp(P.hairPart ?? 0.62, 0, 1);
-    const partU = lerp(-0.30, 0.30, partN);   // beyond ±0.3 the parting reaches the temple
-    const partGap = 0.045;
+    const partU = lerp(-0.30, 0.30, partN);
     const sweptLeft = partU >= 0;
+    const density = style === 4 ? hair * 0.75 : hair;
 
+    // the hairline, as the cap's own edge
     const line = new Path2D();
     line.moveTo(ux(-hwH), vy(hv - 0.012));
-    if (style === 1) {                             // buzz: a high, even line
+    if (style === 1) {                              // buzz: a high, even line
       line.quadraticCurveTo(ux(0), vy(hv - 0.060), ux(hwH), vy(hv - 0.012));
-    } else if (style === 3) {                      // side part: sweeps one way
+    } else if (style === 3) {                       // side part: sweeps one way
       line.bezierCurveTo(ux(-hwH * 0.34), vy(hv - 0.070),
                          ux(hwH * 0.30), vy(hv + 0.020), ux(hwH), vy(hv + 0.028));
-    } else if (style === 8) {                      // curly: a scalloped hairline
-      const N = 30;
-      for (let i = 1; i <= N; i++) {
-        const t = i / N;
-        const u = lerp(-hwH, hwH, t);
-        const wave = 0.0105 * Math.sin(t * Math.PI * 9.5) + 0.0055 * Math.cos(t * Math.PI * 17);
-        const lift = -0.010 * Math.sin(Math.PI * t);
-        line.lineTo(ux(u), vy(hv + wave + lift));
-      }
-    } else if (crest) {                            // crest: a shaved band
-      line.quadraticCurveTo(ux(0), vy(hv - 0.020), ux(hwH), vy(hv - 0.012));
-    } else {                                       // widow's peak
+    } else {                                        // short / topknot: widow's peak
       line.quadraticCurveTo(ux(-hwH * 0.55), vy(hv + 0.030), ux(-hwH * 0.16), vy(hv + 0.006));
       line.quadraticCurveTo(ux(0), vy(hv - 0.004), ux(hwH * 0.16), vy(hv + 0.006));
       line.quadraticCurveTo(ux(hwH * 0.55), vy(hv + 0.030), ux(hwH), vy(hv - 0.012));
@@ -926,49 +889,24 @@
     cap.lineTo(ux(-hwH), vy(-0.06));
     cap.closePath();
 
-    const density = crest ? hair * 0.5 : hair;
+    // cap: a soft tonal shadow from the crown down to the hairline. No strands, no
+    // hairlines, no lit edges — the hair is a shadow on this face, and every line drawn
+    // on it read as a line drawn on the hologram.
     ctx.save();
     ctx.clip(cap);
-    // A faint tint only: a solid fill swallowed the mesh and the scan band, which
-    // is the whole hologram. The hair is read from its strands, not its mass.
     const g = ctx.createLinearGradient(0, vy(-0.02), 0, vy(hv + 0.04));
-    g.addColorStop(0, `rgba(10,44,57,${0.19 * density})`);
-    g.addColorStop(0.8, `rgba(7,30,39,${0.14 * density})`);
-    g.addColorStop(1, 'rgba(4,16,20,0)');
+    g.addColorStop(0, `rgba(6,26,34,${0.52 * density})`);
+    g.addColorStop(0.55, `rgba(5,21,28,${0.40 * density})`);
+    g.addColorStop(1, `rgba(4,16,20,${0.12 * density})`);
     ctx.fillStyle = g;
     ctx.fillRect(ux(-1.1), vy(-0.1), dU(2.2), dV(hv + 0.16));
-
-    // Strands, but not a comb: spacing, length, alpha and curvature all jitter, so the
-    // cap reads as hair instead of a barcode. Deterministic, so it does not crawl.
-    const hash = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
-    // Strands run crown to hairline and fan outward, the way hair actually sits: they
-    // all start near the same point but with different lengths, bends and alphas, so the
-    // cap has direction without ever forming a comb.
-    const N = Math.round(26 + 34 * hair);
-    for (let i = 0; i < N; i++) {
-      const h1 = hash(i + 1), h2 = hash(i + 91.3), h3 = hash(i + 17.7);
-      const u = lerp(-hwH * 0.97, hwH * 0.97, (i + 0.6 * h2) / N);
-      const vTop = -0.030 + 0.050 * h1;                    // near the crown
-      const vEnd = hv - 0.004 - 0.028 * h3;                // at the hairline
-      // strands radiate from the parting, not from the crown centre: that fan is the
-      // whole read of a combed head, and it is why a centre-started fan looked moulded
-      const startU = partU + (u - partU) * 0.14;
-      ctx.strokeStyle = rgba(COL.main, (0.09 + 0.15 * h3) * hair);
-      ctx.lineWidth = 0.7 + 0.8 * h2;
-      ctx.beginPath();
-      ctx.moveTo(ux(startU), vy(vTop));
-      ctx.bezierCurveTo(ux(lerp(startU, u, 0.35) + 0.05 * (h1 - 0.5)), vy(lerp(vTop, vEnd, 0.45)),
-                        ux(lerp(startU, u, 0.82) + 0.03 * (h2 - 0.5)), vy(lerp(vTop, vEnd, 0.80)),
-                        ux(u), vy(vEnd));
-      ctx.stroke();
-    }
     ctx.restore();
 
-    // shadow on the forehead: clipping the cap shifted down makes its edge follow
-    // the hairline curve instead of cutting a straight band across the face
+    // shadow cast on the forehead: the cap clipped and shifted down, so the edge follows
+    // the hairline curve instead of cutting a straight band
     const sh = ctx.createLinearGradient(0, vy(hv - 0.012), 0, vy(hv + 0.060));
-    sh.addColorStop(0, `rgba(0,4,7,${0.16 * density})`);
-    sh.addColorStop(0.55, `rgba(0,4,7,${0.07 * density})`);
+    sh.addColorStop(0, `rgba(0,4,7,${0.18 * density})`);
+    sh.addColorStop(0.55, `rgba(0,4,7,${0.08 * density})`);
     sh.addColorStop(1, 'rgba(0,4,7,0)');
     ctx.save();
     ctx.translate(0, dV(0.060));
@@ -977,119 +915,40 @@
     ctx.fillRect(ux(-1.1), vy(hv - 0.02), dU(2.2), dV(0.10));
     ctx.restore();
 
-    // fringe: uneven strokes crossing the hairline so the edge is not a band
-    ctx.save();
-    ctx.clip(cap);
-    const fh = (n) => { const x = Math.sin(n * 311.7 + 127.1) * 24634.6345; return x - Math.floor(x); };
-    for (let i = 0; i < 34; i++) {
-      const h1 = fh(i + 3), h2 = fh(i + 44.9);
-      const u = lerp(-0.99, 0.99, (i + h2 * 0.8) / 34);
-      const x = ux(u * hwH * (0.93 + 0.05 * h1));
-      const drop = (0.020 + 0.048 * h1) * (0.55 + 0.45 * hair);
-      ctx.strokeStyle = rgba(COL.main, (0.08 + 0.13 * h2) * hair);
-      ctx.lineWidth = 0.8 + 0.6 * h1;
-      ctx.beginPath();
-      ctx.moveTo(x, vy(hv - 0.016));
-      ctx.quadraticCurveTo(x * 1.006, vy(hv + drop * 0.6), x * 0.994, vy(hv + drop));
-      ctx.stroke();
-    }
-    ctx.restore();
-
-    // fringe mass: the forehead is the one place hair has to sit ON the face, and a
-    // handful of strands over a faint cap edge reads as a swim cap. Three lobes with a
-    // ragged lower edge, denser at the temples where a part would fall, and never a
-    // stroked hairline — the edge is the fill's own boundary.
-    // The swept side dips lower as it approaches the parting, which is what turns a
-    // moulded cap into combed hair.
+    // fringe: one shadow mass with lobes, dipping lower as it approaches the parting on
+    // the swept side. Its edge is the fill boundary — no stroke along it.
     ctx.save();
     ctx.clip(cap);
     const fr = new Path2D();
-    const lobes = style === 3 ? 1 : 2;      // two curtains, not a smooth band: the lobes have to show
+    const lobes = style === 3 ? 1 : 2;
     const frTop = -0.02;
+    const dipAt = (uu, q) => {
+      const lw = Math.sin(q * Math.PI * lobes);
+      const towardPart = sweptLeft ? clamp((uu / Math.max(1e-6, partU)) - 0.55, 0, 1)
+                                   : clamp((1 - uu / Math.max(1e-6, partU)) * 0.5, 0, 1);
+      return 0.026 + 0.050 * Math.abs(lw)
+           + 0.018 * (1 - Math.abs(uu) / Math.max(1e-6, hwH))
+           + 0.042 * towardPart;
+    };
     fr.moveTo(ux(-hwH), vy(frTop));
     for (let i = 0; i <= 48; i++) {
       const q = i / 48;
       const uu = lerp(-hwH, hwH, q);
-      const lw = Math.sin(q * Math.PI * lobes);                 // lobe wave across the brow
-      // the swept side falls longer as it approaches the parting
-      const towardPart = sweptLeft ? clamp((uu / Math.max(1e-6, partU)) - 0.55, 0, 1)
-                                   : clamp((1 - uu / Math.max(1e-6, partU)) * 0.5, 0, 1);
-      const dip = 0.026 + 0.050 * Math.abs(lw)
-                + 0.018 * (1 - Math.abs(uu) / Math.max(1e-6, hwH))
-                + 0.042 * towardPart;
-      fr.lineTo(ux(uu), vy(hv + dip));
+      fr.lineTo(ux(uu), vy(hv + dipAt(uu, q)));
     }
     fr.lineTo(ux(hwH), vy(frTop));
     fr.closePath();
-    // the fringe's own lower edge, lit: two dark curtains on a dark shell have no
-    // contrast at all, which is why the parting read as a crack and the fringe as a band
-    const fe = new Path2D();
-    for (let i = 0; i <= 48; i++) {
-      const q = i / 48;
-      const uu = lerp(-hwH, hwH, q);
-      const lw = Math.sin(q * Math.PI * lobes);
-      const towardPart = sweptLeft ? clamp((uu / Math.max(1e-6, partU)) - 0.55, 0, 1)
-                                   : clamp((1 - uu / Math.max(1e-6, partU)) * 0.5, 0, 1);
-      const dip = 0.026 + 0.050 * Math.abs(lw)
-                + 0.018 * (1 - Math.abs(uu) / Math.max(1e-6, hwH))
-                + 0.042 * towardPart;
-      const x = ux(uu), y = vy(hv + dip);
-      i ? fe.lineTo(x, y) : fe.moveTo(x, y);
-    }
-    ctx.strokeStyle = rgba(COL.core, 0.26 * density);
-    ctx.lineWidth = 1.3;
-    ctx.stroke(fe);
     const fg = ctx.createLinearGradient(0, vy(frTop), 0, vy(hv + 0.05));
-    fg.addColorStop(0, `rgba(6,26,34,${0.62 * density})`);
-    fg.addColorStop(0.7, `rgba(5,20,27,${0.46 * density})`);
+    fg.addColorStop(0, `rgba(6,26,34,${0.60 * density})`);
+    fg.addColorStop(0.7, `rgba(5,20,27,${0.44 * density})`);
     fg.addColorStop(1, `rgba(4,15,20,${0.10 * density})`);
     ctx.fillStyle = fg;
     ctx.fill(fr);
     ctx.restore();
 
-    // carve the parting through the fringe, then light its seam. Without the carve the
-    // two halves are one slab and the part reads as a smudge on the forehead.
-    ctx.save();
-    ctx.clip(cap);
-    // a V that widens toward the hairline, so the fringe reads as two masses with a gap
-    const pw = new Path2D();
-    pw.moveTo(ux(partU * 0.18), vy(frTop));
-    pw.quadraticCurveTo(ux(partU * 0.5 - partGap * 0.8), vy(hv * 0.6),
-                        ux(partU - partGap * 1.5), vy(hv + 0.072));
-    pw.lineTo(ux(partU + partGap * 1.5), vy(hv + 0.072));
-    pw.quadraticCurveTo(ux(partU * 0.5 + partGap * 0.8), vy(hv * 0.6),
-                        ux(partU * 0.18), vy(frTop));
-    pw.closePath();
-    const pg = ctx.createLinearGradient(0, vy(frTop), 0, vy(hv + 0.07));
-    pg.addColorStop(0, 'rgba(3,12,17,0.55)');
-    pg.addColorStop(0.6, 'rgba(3,12,17,0.80)');
-    pg.addColorStop(1, 'rgba(3,12,17,0.90)');
-    ctx.fillStyle = pg;
-    ctx.fill(pw);
-    // one soft lit edge, not a hard seam: a bright line reads as a crack in the shell
-    const sg2 = ctx.createLinearGradient(0, vy(frTop), 0, vy(hv + 0.07));
-    sg2.addColorStop(0, rgba(COL.core, 0));
-    sg2.addColorStop(0.45, rgba(COL.core, 0.12 * density));
-    sg2.addColorStop(1, rgba(COL.core, 0.22 * density));
-    ctx.strokeStyle = sg2;
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    ctx.moveTo(ux(partU * 0.18 + partGap * 0.6), vy(frTop + 0.01));
-    ctx.quadraticCurveTo(ux(partU * 0.5 + partGap), vy(hv * 0.6), ux(partU + partGap * 1.1), vy(hv + 0.066));
-    ctx.stroke();
-    ctx.restore();
-
-    // no hairline stroke: the hair ends at its own fade, not at a drawn line
-
-    if (crest) {
-      // the ridge continues over the crown
-      ctx.strokeStyle = rgba(COL.core, 0.35 * hair);
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(ux(0), vy(hv * 0.35));
-      ctx.lineTo(ux(0), vy(-0.02));
-      ctx.stroke();
-    }
+    // No drawn parting. A dark notch through the fringe reads as a line milled into the
+    // face however narrow it is, and the brief is shadow, not lines: the parting survives
+    // only as the fringe's own asymmetry (the swept side falls longer toward the part).
   }
 
   /* ---------------------------------------------------------------- ears */
