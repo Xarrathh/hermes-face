@@ -1465,8 +1465,13 @@
   let last = 0;
   let fpsAcc = 0, fpsN = 0;
 
+  let lastPaint = 0;
+  const FRAME_MS = 1000 / 40;      // 40 fps is plenty for a face and leaves the
+                                  // compositor room to run its own animations
   function frame(now) {
     requestAnimationFrame(frame);
+    if (now - lastPaint < FRAME_MS) return;
+    lastPaint = now;
     try {
     let dt = (now - last) / 1000;
     if (!isFinite(dt) || dt <= 0) dt = 1 / 60;
