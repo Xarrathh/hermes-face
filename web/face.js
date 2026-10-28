@@ -345,7 +345,8 @@
     // so the leading character of every column burns brighter than its trail
     const gw = RAIN.glyphW, gh = RAIN.glyphH;
     const fonts = `500 ${Math.round(gh * 0.78)}px "JetBrainsMono Nerd Font", monospace`;
-    for (const [canvas, colour] of [[RAIN.atlas, rgba(COL.main, 1)], [RAIN.headAtlas, rgba(COL.core, 1)]]) {
+    const headCol = hsl2rgb(P.hue ?? 186, (P.sat ?? 0.78) * 0.55, 0.84);
+    for (const [canvas, colour] of [[RAIN.atlas, rgba(COL.main, 1)], [RAIN.headAtlas, rgba(headCol, 1)]]) {
       canvas.width = gw * RAIN.count;
       canvas.height = gh;
       const a = canvas.getContext('2d');
@@ -816,16 +817,18 @@
     if (RAIN.ready) {
       // transparency * faceRain = how much code the face carries; whole passes stack,
       // so the top of the slider is genuinely brighter instead of clamping at 1
-      const total = Math.max(0, P.faceRain ?? 2.6);
-      if (total > 0.02) {
+      const fr = Math.max(0, P.faceRain ?? 2.6);
+      if (fr > 0.02) {
+        // Source-over, so the code keeps its hue at full strength. Additive stacking
+        // is what turned the face white: six passes of any colour clip to white.
+        // repeated source-over passes build opacity out of the glyphs themselves:
+        // more code on the face, still the hue, never white
+        const passes = clamp(Math.ceil(fr), 1, 6);
         ctx.save();
         ctx.clip(hp);
-        ctx.globalCompositeOperation = 'lighter';
-        const passes = Math.ceil(total);
-        for (let i = 0; i < passes; i++) {
-          ctx.globalAlpha = Math.min(1, total - i);
-          ctx.drawImage(RAIN.buf, 0, 0);
-        }
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 0.62;
+        for (let i = 0; i < passes; i++) ctx.drawImage(RAIN.buf, 0, 0);
         ctx.restore();
       }
     }
@@ -1468,7 +1471,10 @@
     const hueBefore = COL.main.join(), satBefore = COL.core.join();
     P = Object.assign({}, P, next);
     palette();
-    if (COL.main.join() !== hueBefore || COL.core.join() !== satBefore) buildRain();
+    if (COL.main.join() !== hueBefore || COL.core.join() !== satBefore) {
+      buildRain();
+      RAIN.c.clearRect(0, 0, RAIN.w, RAIN.h);
+    }
     layout();
     rebuildGeometry();
     buildRain();
