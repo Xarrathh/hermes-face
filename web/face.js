@@ -379,7 +379,7 @@
     const c = RAIN.c;
     // fade what is already there: this is what turns glyphs into trails
     c.globalCompositeOperation = 'destination-out';
-    c.fillStyle = 'rgba(0,0,0,0.011)';
+    c.fillStyle = 'rgba(0,0,0,0.034)';
     c.fillRect(0, 0, RAIN.w, RAIN.h);
     c.globalCompositeOperation = 'source-over';
 
@@ -835,10 +835,10 @@
 
     // dark glass body: the head occludes the room behind it
     const bg = ctx.createRadialGradient(cx - dU(0.16), vy(0.34), dU(0.03), cx, vy(0.52), dU(1.15));
-    bg.addColorStop(0, `rgba(14,60,74,${0.58 + 0.36 * fill})`);
-    bg.addColorStop(0.45, `rgba(8,36,46,${0.56 + 0.40 * fill})`);
-    bg.addColorStop(0.82, `rgba(3,16,21,${0.60 + 0.38 * fill})`);
-    bg.addColorStop(1, `rgba(2,9,13,${0.65 + 0.34 * fill})`);
+    bg.addColorStop(0, `rgba(10,44,56,${0.34 + 0.26 * fill})`);
+    bg.addColorStop(0.45, `rgba(6,26,34,${0.38 + 0.30 * fill})`);
+    bg.addColorStop(0.82, `rgba(3,14,19,${0.48 + 0.30 * fill})`);
+    bg.addColorStop(1, `rgba(2,9,13,${0.56 + 0.28 * fill})`);
     ctx.fillStyle = bg;
     ctx.fillRect(ux(-1.1), vy(-0.1), dU(2.2), dV(1.2));
 
@@ -876,8 +876,8 @@
 
     ctx.globalCompositeOperation = 'lighter';
     const key = ctx.createRadialGradient(ux(-0.45), vy(0.20), dU(0.04), ux(-0.35), vy(0.38), dU(1.25));
-    key.addColorStop(0, rgba(COL.main, 0.22 * glow));
-    key.addColorStop(0.45, rgba(COL.main, 0.09 * glow));
+    key.addColorStop(0, rgba(COL.main, 0.13 * glow));
+    key.addColorStop(0.45, rgba(COL.main, 0.05 * glow));
     key.addColorStop(1, rgba(COL.main, 0));
     ctx.fillStyle = key;
     ctx.fillRect(ux(-1.1), vy(-0.05), dU(2.2), dV(1.15));
@@ -924,24 +924,27 @@
       if (fr > 0.02) {
         // Source-over, so the code keeps its hue at full strength. Additive stacking
         // is what turned the face white: six passes of any colour clip to white.
-        // repeated source-over passes build opacity out of the glyphs themselves:
-        // more code on the face, still the hue, never white
-        const passes = clamp(Math.ceil(fr), 1, 6);
+        // Additive, but capped: six additive passes clip to white, and repeated
+        // source-over lays a milky film over the head, which is the "ghost" look.
+        // One to three passes at a bounded total keeps the glyphs crisp and coloured.
+        const total = clamp(fr * 0.24, 0, 1.35);
+        const passes = Math.max(1, Math.ceil(total));
         ctx.save();
         ctx.clip(hp);
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.globalAlpha = 0.62;
+        ctx.globalCompositeOperation = 'lighter';
         if (effect === 4) {
           ctx.save();
           ctx.translate(HEAD.cx, HEAD.cy);
           ctx.scale(0.55, 0.55);
           ctx.translate(-HEAD.cx, -HEAD.cy);
-          ctx.globalAlpha = 0.45;
+          ctx.globalAlpha = Math.min(0.8, total * 0.45);
           ctx.drawImage(RAIN.buf, 0, 0);
           ctx.restore();
-          ctx.globalAlpha = 0.62;
         }
-        for (let i = 0; i < passes; i++) ctx.drawImage(RAIN.buf, 0, 0);
+        for (let i = 0; i < passes; i++) {
+          ctx.globalAlpha = Math.min(1, total - i);
+          ctx.drawImage(RAIN.buf, 0, 0);
+        }
         ctx.restore();
       }
     }
