@@ -1,0 +1,556 @@
+{
+  "_comment": "Single source of truth for the face. Server validates against this, the page builds its editor from it. Units: u in [-1,1] across the head width, v in [0,1] crown->chin.",
+  "groups": [
+    {
+      "id": "head",
+      "label": "Head",
+      "params": [
+        {
+          "key": "headWidth",
+          "label": "Width",
+          "min": 0.8,
+          "max": 1.2,
+          "step": 0.005,
+          "default": 1.0
+        },
+        {
+          "key": "headLength",
+          "label": "Length",
+          "min": 0.7,
+          "max": 1.3,
+          "step": 0.005,
+          "default": 1.0
+        },
+        {
+          "key": "cranium",
+          "label": "Cranium",
+          "min": 0.85,
+          "max": 1.15,
+          "step": 0.005,
+          "default": 1.0
+        },
+        {
+          "key": "cheekbone",
+          "label": "Cheekbones",
+          "min": 0.85,
+          "max": 1.15,
+          "step": 0.005,
+          "default": 1.0
+        },
+        {
+          "key": "jawWidth",
+          "label": "Jaw width",
+          "min": 0.6,
+          "max": 1.05,
+          "step": 0.005,
+          "default": 1.02
+        },
+        {
+          "key": "chinWidth",
+          "label": "Chin width",
+          "min": 0.55,
+          "max": 1.2,
+          "step": 0.005,
+          "default": 1.1
+        },
+        {
+          "key": "chinLength",
+          "label": "Chin length",
+          "min": 0.8,
+          "max": 1.25,
+          "step": 0.005,
+          "default": 1.0
+        },
+        {
+          "key": "hairline",
+          "label": "Hairline",
+          "min": 0.18,
+          "max": 0.44,
+          "step": 0.002,
+          "default": 0.245
+        },
+        {
+          "key": "hairStyle",
+          "label": "Style",
+          "kind": "select",
+          "default": 2,
+          "options": [
+            "Bald",
+            "Buzz cut",
+            "Short",
+            "Side part",
+            "Bob",
+            "Long",
+            "Topknot",
+            "Crest",
+            "Curly"
+          ]
+        },
+        {
+          "key": "hair",
+          "label": "Hair density",
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.01,
+          "default": 0.85
+        }
+      ]
+    },
+    {
+      "id": "eyes",
+      "label": "Eyes",
+      "params": [
+        {
+          "key": "eyeY",
+          "label": "Eye line",
+          "min": 0.44,
+          "max": 0.57,
+          "step": 0.002,
+          "default": 0.5
+        },
+        {
+          "key": "eyeU",
+          "label": "Spacing",
+          "min": 0.28,
+          "max": 0.5,
+          "step": 0.002,
+          "default": 0.425
+        },
+        {
+          "key": "eyeW",
+          "label": "Size",
+          "min": 0.28,
+          "max": 0.54,
+          "step": 0.002,
+          "default": 0.465
+        },
+        {
+          "key": "eyeOpen",
+          "label": "Opening",
+          "min": 0.5,
+          "max": 1.7,
+          "step": 0.005,
+          "default": 1.02
+        },
+        {
+          "key": "eyeTilt",
+          "label": "Tilt",
+          "min": -0.3,
+          "max": 0.3,
+          "step": 0.005,
+          "default": 0.06
+        },
+        {
+          "key": "irisSize",
+          "label": "Iris",
+          "min": 0.55,
+          "max": 1.6,
+          "step": 0.005,
+          "default": 1.25
+        },
+        {
+          "key": "pupilSize",
+          "label": "Pupil",
+          "min": 0.2,
+          "max": 0.75,
+          "step": 0.005,
+          "default": 0.4
+        },
+        {
+          "key": "lashes",
+          "label": "Lashes",
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.01,
+          "default": 0.9
+        },
+        {
+          "key": "lashLength",
+          "label": "Lash length",
+          "min": 0.4,
+          "max": 2.0,
+          "step": 0.01,
+          "default": 1.0
+        }
+      ]
+    },
+    {
+      "id": "brows",
+      "label": "Brows",
+      "params": [
+        {
+          "key": "browHeight",
+          "label": "Height",
+          "min": 0.02,
+          "max": 0.11,
+          "step": 0.002,
+          "default": 0.056
+        },
+        {
+          "key": "browThickness",
+          "label": "Thickness",
+          "min": 0.3,
+          "max": 2.0,
+          "step": 0.01,
+          "default": 1.35
+        },
+        {
+          "key": "browLength",
+          "label": "Length",
+          "min": 0.7,
+          "max": 1.45,
+          "step": 0.005,
+          "default": 1.1
+        },
+        {
+          "key": "browArch",
+          "label": "Arch",
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.01,
+          "default": 0.5
+        },
+        {
+          "key": "browSlant",
+          "label": "Slant",
+          "min": -0.6,
+          "max": 0.6,
+          "step": 0.01,
+          "default": 0.0
+        }
+      ]
+    },
+    {
+      "id": "nose",
+      "label": "Nose",
+      "params": [
+        {
+          "key": "noseTop",
+          "label": "Root",
+          "min": 0.44,
+          "max": 0.58,
+          "step": 0.002,
+          "default": 0.488
+        },
+        {
+          "key": "noseLength",
+          "label": "Length",
+          "min": 0.1,
+          "max": 0.26,
+          "step": 0.002,
+          "default": 0.17
+        },
+        {
+          "key": "noseWidth",
+          "label": "Width",
+          "min": 0.08,
+          "max": 0.32,
+          "step": 0.002,
+          "default": 0.205
+        },
+        {
+          "key": "noseShade",
+          "label": "Contour",
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.01,
+          "default": 0.55
+        },
+        {
+          "key": "nostril",
+          "label": "Nostrils",
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.01,
+          "default": 0.65
+        }
+      ]
+    },
+    {
+      "id": "mouth",
+      "label": "Mouth",
+      "params": [
+        {
+          "key": "mouthY",
+          "label": "Height",
+          "min": 0.72,
+          "max": 0.87,
+          "step": 0.002,
+          "default": 0.778
+        },
+        {
+          "key": "mouthWidth",
+          "label": "Width",
+          "min": 0.14,
+          "max": 0.36,
+          "step": 0.002,
+          "default": 0.185
+        },
+        {
+          "key": "lipFullness",
+          "label": "Lips",
+          "min": 0.4,
+          "max": 1.9,
+          "step": 0.01,
+          "default": 1.15
+        },
+        {
+          "key": "smile",
+          "label": "Smile",
+          "min": -0.5,
+          "max": 0.6,
+          "step": 0.01,
+          "default": 0.08
+        },
+        {
+          "key": "cupid",
+          "label": "Cupid's bow",
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.01,
+          "default": 0.55
+        }
+      ]
+    },
+    {
+      "id": "ears",
+      "label": "Ears",
+      "params": [
+        {
+          "key": "earY",
+          "label": "Height",
+          "min": 0.36,
+          "max": 0.56,
+          "step": 0.002,
+          "default": 0.44
+        },
+        {
+          "key": "earSize",
+          "label": "Size",
+          "min": 0.5,
+          "max": 1.7,
+          "step": 0.005,
+          "default": 1.1
+        },
+        {
+          "key": "earOut",
+          "label": "Protrusion",
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.01,
+          "default": 0.55
+        },
+        {
+          "key": "earTilt",
+          "label": "Tilt",
+          "min": -0.4,
+          "max": 0.4,
+          "step": 0.005,
+          "default": 0.1
+        }
+      ]
+    },
+    {
+      "id": "holo",
+      "label": "Hologram",
+      "params": [
+        {
+          "key": "hue",
+          "label": "Hue",
+          "min": 0,
+          "max": 360,
+          "step": 1,
+          "default": 186
+        },
+        {
+          "key": "sat",
+          "label": "Saturation",
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.01,
+          "default": 0.78
+        },
+        {
+          "key": "glow",
+          "label": "Glow",
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.01,
+          "default": 1.1
+        },
+        {
+          "key": "mesh",
+          "label": "Mesh",
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.01,
+          "default": 1.0
+        },
+        {
+          "key": "fill",
+          "label": "Occlusion",
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.01,
+          "default": 0.88
+        },
+        {
+          "key": "scan",
+          "label": "Scan band",
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.01,
+          "default": 0.55
+        },
+        {
+          "key": "flicker",
+          "label": "Flicker",
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.01,
+          "default": 0.3
+        },
+        {
+          "key": "dust",
+          "label": "Dust",
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.01,
+          "default": 0.6
+        },
+        {
+          "key": "grid",
+          "label": "Floor grid",
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.01,
+          "default": 0.45
+        }
+      ]
+    },
+    {
+      "id": "motion",
+      "label": "Motion",
+      "params": [
+        {
+          "key": "breath",
+          "label": "Breathing",
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.01,
+          "default": 0.6
+        },
+        {
+          "key": "blinkRate",
+          "label": "Blink rate",
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.01,
+          "default": 0.5
+        },
+        {
+          "key": "gaze",
+          "label": "Gaze wander",
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.01,
+          "default": 0.55
+        },
+        {
+          "key": "jawDrop",
+          "label": "Jaw on speak",
+          "min": 0.4,
+          "max": 1.6,
+          "step": 0.01,
+          "default": 1.0
+        },
+        {
+          "key": "browMotion",
+          "label": "Brow motion",
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.01,
+          "default": 0.65
+        }
+      ]
+    }
+  ],
+  "presets": {
+    "Hermes": {},
+    "Feminine": {
+      "headWidth": 0.96,
+      "jawWidth": 0.86,
+      "chinWidth": 0.78,
+      "chinLength": 0.94,
+      "eyeW": 0.46,
+      "eyeOpen": 1.1,
+      "browThickness": 0.72,
+      "browArch": 0.7,
+      "noseWidth": 0.165,
+      "mouthWidth": 0.225,
+      "lipFullness": 1.3,
+      "earSize": 0.9,
+      "earOut": 0.38,
+      "jawDrop": 0.9
+    },
+    "Masculine": {
+      "headWidth": 1.05,
+      "headLength": 1.04,
+      "cranium": 1.03,
+      "jawWidth": 1.0,
+      "chinWidth": 1.06,
+      "eyeW": 0.4,
+      "eyeOpen": 0.92,
+      "browThickness": 1.35,
+      "browArch": 0.32,
+      "browHeight": 0.052,
+      "noseWidth": 0.215,
+      "noseLength": 0.175,
+      "mouthWidth": 0.26,
+      "lipFullness": 0.85,
+      "earSize": 1.08,
+      "earOut": 0.7,
+      "jawDrop": 1.15
+    },
+    "Android": {
+      "headWidth": 1.02,
+      "cranium": 1.08,
+      "jawWidth": 0.92,
+      "cheekbone": 1.08,
+      "eyeW": 0.36,
+      "eyeOpen": 1.25,
+      "eyeTilt": 0.16,
+      "irisSize": 1.25,
+      "pupilSize": 0.3,
+      "browThickness": 0.55,
+      "browHeight": 0.08,
+      "noseWidth": 0.15,
+      "noseShade": 0.35,
+      "mouthWidth": 0.2,
+      "lipFullness": 0.7,
+      "earSize": 0.72,
+      "earOut": 0.3,
+      "hue": 168,
+      "sat": 0.6,
+      "mesh": 1.55,
+      "scan": 0.8,
+      "flicker": 0.55
+    },
+    "Serene": {
+      "eyeY": 0.505,
+      "eyeOpen": 0.86,
+      "browArch": 0.62,
+      "browSlant": -0.12,
+      "mouthWidth": 0.235,
+      "smile": 0.22,
+      "lipFullness": 1.1,
+      "hue": 196,
+      "sat": 0.55,
+      "glow": 1.2,
+      "scan": 0.35,
+      "breath": 0.85,
+      "blinkRate": 0.3,
+      "gaze": 0.35
+    }
+  }
+}
