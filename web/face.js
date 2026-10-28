@@ -785,93 +785,120 @@
   function drawHairFront() {
     const style = hairStyle();
     const hair = P.hair ?? 0.85;
-    if (hair < 0.02) return;
-    if (style === 0) return;                        // bald
     const hv = P.hairline ?? 0.245;
     const hwH = halfWidth(hv) * 1.005;
-    // Parting: 0.5 is centre; the bigger half is the swept side. This is a *shape* — a
-    // dark scalp gap carved through the fringe — never a drawn line.
+    // Hairline shape and darkness are independent of the hair itself, so a bald head can
+    // still carry a hairline (a shaved edge) and any style's edge can be pushed darker
+    // without adding mass.
+    const edge = clamp(Math.round(P.hairEdge ?? 2), 0, 4);
+    const dark = clamp(P.hairDark ?? 1, 0, 2);
+    const bald = style === 0;
+    if (bald && (edge === 0 || dark < 0.02)) return;
+    if (!bald && hair < 0.02) return;
     const partN = clamp(P.hairPart ?? 0.62, 0, 1);
     const partU = lerp(-0.30, 0.30, partN);
     const sweptLeft = partU >= 0;
     const density = hair;
 
-    // the hairline, as the cap's own edge
-    const line = new Path2D();
-    line.moveTo(ux(-hwH), vy(hv - 0.012));
-    if (style === 1) {                              // buzz: a high, even line
-      line.quadraticCurveTo(ux(0), vy(hv - 0.060), ux(hwH), vy(hv - 0.012));
-    } else {                                        // short: widow's peak
-      line.quadraticCurveTo(ux(-hwH * 0.55), vy(hv + 0.030), ux(-hwH * 0.16), vy(hv + 0.006));
-      line.quadraticCurveTo(ux(0), vy(hv - 0.004), ux(hwH * 0.16), vy(hv + 0.006));
-      line.quadraticCurveTo(ux(hwH * 0.55), vy(hv + 0.030), ux(hwH), vy(hv - 0.012));
-    }
-
-    const cap = new Path2D(line);
-    cap.lineTo(ux(hwH), vy(-0.06));
-    cap.lineTo(ux(-hwH), vy(-0.06));
-    cap.closePath();
-
-    // cap: a soft tonal shadow from the crown down to the hairline. No strands, no
-    // hairlines, no lit edges — the hair is a shadow on this face, and every line drawn
-    // on it read as a line drawn on the hologram.
-    ctx.save();
-    ctx.clip(cap);
-    const g = ctx.createLinearGradient(0, vy(-0.02), 0, vy(hv + 0.04));
-    g.addColorStop(0, `rgba(6,26,34,${0.52 * density})`);
-    g.addColorStop(0.55, `rgba(5,21,28,${0.40 * density})`);
-    g.addColorStop(1, `rgba(4,16,20,${0.12 * density})`);
-    ctx.fillStyle = g;
-    ctx.fillRect(ux(-1.1), vy(-0.1), dU(2.2), dV(hv + 0.16));
-    ctx.restore();
-
-    // shadow cast on the forehead: the cap clipped and shifted down, so the edge follows
-    // the hairline curve instead of cutting a straight band
-    const sh = ctx.createLinearGradient(0, vy(hv - 0.012), 0, vy(hv + 0.060));
-    sh.addColorStop(0, `rgba(0,4,7,${0.18 * density})`);
-    sh.addColorStop(0.55, `rgba(0,4,7,${0.08 * density})`);
-    sh.addColorStop(1, 'rgba(0,4,7,0)');
-    ctx.save();
-    ctx.translate(0, dV(0.060));
-    ctx.clip(cap);
-    ctx.fillStyle = sh;
-    ctx.fillRect(ux(-1.1), vy(hv - 0.02), dU(2.2), dV(0.10));
-    ctx.restore();
-
-    // fringe: one shadow mass with lobes, dipping lower as it approaches the parting on
-    // the swept side. Its edge is the fill boundary — no stroke along it.
-    ctx.save();
-    ctx.clip(cap);
-    const fr = new Path2D();
-    const lobes = style === 1 ? 1 : 2;
-    const frTop = -0.02;
-    const dipAt = (uu, q) => {
-      const lw = Math.sin(q * Math.PI * lobes);
-      const towardPart = sweptLeft ? clamp((uu / Math.max(1e-6, partU)) - 0.55, 0, 1)
-                                   : clamp((1 - uu / Math.max(1e-6, partU)) * 0.5, 0, 1);
-      return 0.026 + 0.050 * Math.abs(lw)
-           + 0.018 * (1 - Math.abs(uu) / Math.max(1e-6, hwH))
-           + 0.042 * towardPart;
+    // the hairline curve: five shapes, all in v, all relative to the Hairline slider
+    const edgeY = (uu) => {
+      const k = Math.abs(uu) / Math.max(1e-6, hwH);          // 0 centre, 1 temple
+      if (edge === 1) return hv - 0.004 + 0.010 * k * k;       // straight: even, flat arc
+      if (edge === 3) return hv - 0.044 * Math.pow(k, 1.45) + 0.014 * (1 - k); // receding: temples pulled back
+      if (edge === 4) return hv + 0.034 * (uu / Math.max(1e-6, hwH)) - 0.008;  // sweep: one side lower
+      // widow's peak: a pronounced dip at the centre, rising toward the temples
+      return hv - 0.008 + 0.026 * Math.pow(k, 1.2) - 0.030 * Math.exp(-Math.pow(uu / (hwH * 0.20), 2));
     };
-    fr.moveTo(ux(-hwH), vy(frTop));
-    for (let i = 0; i <= 48; i++) {
-      const q = i / 48;
-      const uu = lerp(-hwH, hwH, q);
-      fr.lineTo(ux(uu), vy(hv + dipAt(uu, q)));
-    }
-    fr.lineTo(ux(hwH), vy(frTop));
-    fr.closePath();
-    const fg = ctx.createLinearGradient(0, vy(frTop), 0, vy(hv + 0.05));
-    fg.addColorStop(0, `rgba(6,26,34,${0.60 * density})`);
-    fg.addColorStop(0.7, `rgba(5,20,27,${0.44 * density})`);
-    fg.addColorStop(1, `rgba(4,15,20,${0.10 * density})`);
-    ctx.fillStyle = fg;
-    ctx.fill(fr);
-    ctx.restore();
 
-    // No drawn parting. A dark notch through the fringe reads as a line milled into the
-    // face however narrow it is, and the brief is shadow, not lines: the parting survives
-    // only as the fringe's own asymmetry (the swept side falls longer toward the part).
+    // ---- the cap and the fringe mass: only when there is hair on the head
+    if (!bald) {
+      const cap = new Path2D();
+      cap.moveTo(ux(-hwH), vy(edgeY(-hwH)));
+      for (let i = 0; i <= 40; i++) {
+        const uu = lerp(-hwH, hwH, i / 40);
+        cap.lineTo(ux(uu), vy(edgeY(uu)));
+      }
+      cap.lineTo(ux(hwH), vy(-0.06));
+      cap.lineTo(ux(-hwH), vy(-0.06));
+      cap.closePath();
+
+      ctx.save();
+      ctx.clip(cap);
+      const g = ctx.createLinearGradient(0, vy(-0.02), 0, vy(hv + 0.04));
+      g.addColorStop(0, `rgba(6,26,34,${0.52 * density * dark * 0.7 + 0.18 * density})`);
+      g.addColorStop(0.55, `rgba(5,21,28,${0.40 * density})`);
+      g.addColorStop(1, `rgba(4,16,20,${0.12 * density})`);
+      ctx.fillStyle = g;
+      ctx.fillRect(ux(-1.1), vy(-0.1), dU(2.2), dV(hv + 0.16));
+      ctx.restore();
+
+      // shadow cast on the forehead
+      const sh = ctx.createLinearGradient(0, vy(hv - 0.012), 0, vy(hv + 0.060));
+      sh.addColorStop(0, `rgba(0,4,7,${0.18 * density})`);
+      sh.addColorStop(0.55, `rgba(0,4,7,${0.08 * density})`);
+      sh.addColorStop(1, 'rgba(0,4,7,0)');
+      ctx.save();
+      ctx.translate(0, dV(0.060));
+      ctx.clip(cap);
+      ctx.fillStyle = sh;
+      ctx.fillRect(ux(-1.1), vy(hv - 0.02), dU(2.2), dV(0.10));
+      ctx.restore();
+
+      // fringe: a lobed shadow mass above the hairline, swept side falling lower
+      ctx.save();
+      ctx.clip(cap);
+      const fr = new Path2D();
+      const lobes = style === 1 ? 1 : 2;
+      const frTop = -0.02;
+      const dipAt = (uu, q) => {
+        const lw = Math.sin(q * Math.PI * lobes);
+        const towardPart = sweptLeft ? clamp((uu / Math.max(1e-6, partU)) - 0.55, 0, 1)
+                                     : clamp((1 - uu / Math.max(1e-6, partU)) * 0.5, 0, 1);
+        return 0.010 + 0.040 * Math.abs(lw)
+             + 0.014 * (1 - Math.abs(uu) / Math.max(1e-6, hwH))
+             + 0.030 * towardPart;
+      };
+      fr.moveTo(ux(-hwH), vy(frTop));
+      for (let i = 0; i <= 48; i++) {
+        const q = i / 48;
+        const uu = lerp(-hwH, hwH, q);
+        fr.lineTo(ux(uu), vy(edgeY(uu) + dipAt(uu, q)));
+      }
+      fr.lineTo(ux(hwH), vy(frTop));
+      fr.closePath();
+      const fg = ctx.createLinearGradient(0, vy(frTop), 0, vy(hv + 0.05));
+      fg.addColorStop(0, `rgba(6,26,34,${0.60 * density * dark * 0.8})`);
+      fg.addColorStop(0.7, `rgba(5,20,27,${0.44 * density})`);
+      fg.addColorStop(1, `rgba(4,15,20,${0.10 * density})`);
+      ctx.fillStyle = fg;
+      ctx.fill(fr);
+      ctx.restore();
+    }
+
+    // ---- the hairline band itself: a soft dark edge along the curve, on any head.
+    // A fill with a gradient, never a stroke: this is the "hairline without hair".
+    if (edge !== 0 && dark > 0.02) {
+      const thick = (uu) => dV(0.020 + 0.012 * (1 - Math.abs(uu) / Math.max(1e-6, hwH)));
+      const band = new Path2D();
+      band.moveTo(ux(-hwH), vy(edgeY(-hwH)));
+      for (let i = 1; i <= 56; i++) {
+        const uu = lerp(-hwH, hwH, i / 56);
+        band.lineTo(ux(uu), vy(edgeY(uu)));
+      }
+      for (let i = 56; i >= 0; i--) {
+        const uu = lerp(-hwH, hwH, i / 56);
+        band.lineTo(ux(uu), vy(edgeY(uu)) - thick(uu));
+      }
+      band.closePath();
+      const top = vy(hv - 0.03), bot = vy(hv + 0.03);
+      const bg2 = ctx.createLinearGradient(0, top, 0, bot);
+      const a = (bald ? 0.34 : 0.26) * dark * (bald ? 1 : Math.min(1, hair + 0.35));
+      bg2.addColorStop(0, `rgba(2,9,13,${Math.min(1, a * 1.15)})`);
+      bg2.addColorStop(0.55, `rgba(2,9,13,${Math.min(1, a)})`);
+      bg2.addColorStop(1, 'rgba(2,9,13,0)');
+      ctx.fillStyle = bg2;
+      ctx.fill(band);
+    }
   }
 
   /* ---------------------------------------------------------------- ears */

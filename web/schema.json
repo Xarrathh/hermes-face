@@ -82,6 +82,27 @@
           "default": 0.245
         },
         {
+          "key": "hairEdge",
+          "label": "Hairline shape",
+          "kind": "select",
+          "options": [
+            "None",
+            "Straight",
+            "Widow's peak",
+            "Receding",
+            "Sweep"
+          ],
+          "default": 2
+        },
+        {
+          "key": "hairDark",
+          "label": "Hairline darkness",
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.01,
+          "default": 1.0
+        },
+        {
           "key": "hairStyle",
           "label": "Style",
           "kind": "select",
