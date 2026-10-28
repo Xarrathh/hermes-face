@@ -104,9 +104,12 @@ def hermes_voice() -> str:
         return "en-ZA-LukeNeural"
     block = re.search(r"^tts:\s*$((?:\n[ \t]+.*)+)", text, re.M)
     if block:
-        m = re.search(r"^\s+voice:\s*[\"']?([A-Za-z0-9\-]+)", block.group(1), re.M)
-        if m:
-            return m.group(1)
+        body = block.group(1)
+        edge = re.search(r"^\s+edge:\s*$((?:\n[ \t]+.*)+)", body, re.M)
+        for scope in ([edge.group(1)] if edge else []) + [body]:
+            m = re.search(r"^\s+voice:\s*[\"']?([A-Za-z0-9\-]+)", scope, re.M)
+            if m:
+                return m.group(1)
     return "en-ZA-LukeNeural"
 
 
@@ -146,7 +149,12 @@ def custom_presets(cfg: dict) -> dict:
 
 
 def save_config(cfg: dict) -> None:
-    CONFIG.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+    """Write through a temp file: a truncate-in-place write can be observed
+    half-finished by a concurrent GET /params, which then falls back to schema
+    defaults and silently replaces the tuned look."""
+    tmp = CONFIG.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, CONFIG)
 
 
 def config_rev() -> int:
@@ -167,6 +175,16 @@ def voxtype_state() -> str:
 def set_state(**kw) -> None:
     with LOCK:
         STATE.update(kw)
+
+
+def set_if_current(seq: int, **kw) -> bool:
+    """Only let the turn that owns `seq` write: an abandoned turn finishing
+    late must not overwrite the live one and re-speak an answer nobody wants."""
+    with LOCK:
+        if STATE["seq"] != seq:
+            return False
+        STATE.update(kw)
+        return True
 
 
 def page_build() -> int:
@@ -218,11 +236,11 @@ def _auto_idle_after(seconds: float, seq: int) -> None:
     threading.Thread(target=run, daemon=True).start()
 
 
-def run_turn(text: str) -> None:
+def run_turn(text: str, seq: int) -> None:
     heard = text.strip()
     if not heard:
+        set_if_current(seq, agent="idle")
         return
-    set_state(agent="thinking", heard=heard, reply="", error="")
     qfile = AUDIO / f"q-{int(time.time() * 1000)}.txt"
     qfile.write_text(PROMPT_PREFIX + heard, encoding="utf-8")
 
@@ -259,24 +277,23 @@ def run_turn(text: str) -> None:
         qfile.unlink(missing_ok=True)
 
     speech = clean_for_speech(reply)[:1200]
-    set_state(agent="speaking", reply=reply, session=new_sid or "")
+    if not set_if_current(seq, agent="speaking", reply=reply, session=new_sid or ""):
+        return                                     # this turn was abandoned
     if not speech:
-        set_state(agent="idle")
+        set_if_current(seq, agent="idle")
         return
 
-    with LOCK:
-        STATE["seq"] += 1
-        seq = STATE["seq"]
     out = AUDIO / f"reply-{seq}.mp3"
     try:
         synth(speech, out)
         for old in AUDIO.glob("reply-*.mp3"):
             if old != out:
                 old.unlink(missing_ok=True)
-        set_state(audio=f"/audio/{out.name}")
+        if not set_if_current(seq, audio=f"/audio/{out.name}"):
+            return
         _auto_idle_after(out.stat().st_size / 6000.0 + 4.0, seq)
     except Exception as exc:                       # noqa: BLE001
-        set_state(error=f"tts: {exc}", agent="idle")
+        set_if_current(seq, error=f"tts: {exc}", agent="idle")
 
 
 # --------------------------------------------------------------------- http
@@ -361,68 +378,77 @@ class Handler(BaseHTTPRequestHandler):
             if not text.strip():
                 return self._json({"error": "empty"}, 400)
             with LOCK:
-                busy = STATE["agent"] != "idle"
-            if busy:
-                return self._json({"error": "busy"}, 409)
-            threading.Thread(target=run_turn, args=(text,), daemon=True).start()
-            return self._json({"ok": True})
+                if STATE["agent"] != "idle":
+                    return self._json({"error": "busy"}, 409)
+                STATE["seq"] += 1
+                seq = STATE["seq"]
+                STATE.update(agent="thinking", heard=text.strip(),
+                             reply="", error="", audio=None)
+            threading.Thread(target=run_turn, args=(text, seq), daemon=True).start()
+            return self._json({"ok": True, "seq": seq})
 
         if path == "/params":
-            cfg = load_config()
-            if isinstance(payload.get("voice"), str):
-                if payload["voice"] in {v for v, _ in VOICES}:
-                    cfg["voice"] = payload["voice"]
-            changed = False
-            for key, value in payload.items():
-                if key not in PARAM_SPEC:
-                    continue
-                v = coerce(key, value)
-                if v is None:
-                    continue
-                cfg["params"][key] = v
-                changed = True
-            if changed or "voice" in payload:
-                save_config(cfg)
-            return self._json({"ok": True, "params": cfg["params"],
-                               "voice": cfg["voice"], "rev": config_rev()})
+            with LOCK:                             # read-modify-write must be one step
+                cfg = load_config()
+                if isinstance(payload.get("voice"), str):
+                    if payload["voice"] in {v for v, _ in VOICES}:
+                        cfg["voice"] = payload["voice"]
+                changed = False
+                for key, value in payload.items():
+                    if key not in PARAM_SPEC:
+                        continue
+                    v = coerce(key, value)
+                    if v is None:
+                        continue
+                    cfg["params"][key] = v
+                    changed = True
+                if changed or "voice" in payload:
+                    save_config(cfg)
+                out = {"ok": True, "params": cfg["params"],
+                       "voice": cfg["voice"], "rev": config_rev()}
+            return self._json(out)
 
         if path == "/presets":
-            cfg = load_config()
             name = str(payload.get("name") or "").strip()[:40]
             if not name:
                 return self._json({"error": "name required"}, 400)
-            store = cfg.get("presets")
-            if not isinstance(store, dict):
-                store = {}
-            if payload.get("delete"):
-                store.pop(name, None)
-            else:
-                # save exactly what the face is showing, clamped to the schema
-                saved = {}
-                for k, v in cfg["params"].items():
-                    cv = coerce(k, v)
-                    if cv is not None:
-                        saved[k] = cv
-                store[name] = saved
-            cfg["presets"] = store
-            save_config(cfg)
-            return self._json({"ok": True, "custom": custom_presets(cfg)})
+            with LOCK:                             # same one-step rule as /params
+                cfg = load_config()
+                store = cfg.get("presets")
+                if not isinstance(store, dict):
+                    store = {}
+                if payload.get("delete"):
+                    store.pop(name, None)
+                else:
+                    # save exactly what the face is showing, clamped to the schema
+                    saved = {}
+                    for k, v in cfg["params"].items():
+                        cv = coerce(k, v)
+                        if cv is not None:
+                            saved[k] = cv
+                    store[name] = saved
+                cfg["presets"] = store
+                save_config(cfg)
+                out = {"ok": True, "custom": custom_presets(cfg)}
+            return self._json(out)
 
         if path == "/voice-test":
             sample = str(payload.get("text") or "This is how I sound. Say the word and I will change it.")
-            out = AUDIO / "voice-test.mp3"
+            out = AUDIO / f"voice-test-{int(time.time() * 1000)}.mp3"
             try:
                 synth(sample, out)
                 return self._json({"ok": True, "audio": f"/audio/{out.name}?t={int(time.time())}"})
             except Exception as exc:               # noqa: BLE001
                 return self._json({"ok": False, "error": str(exc)}, 500)
 
-        if path == "/spoken":
-            set_state(agent="idle", audio=None)
-            return self._json({"ok": True})
-
-        if path == "/interrupt":
-            set_state(agent="idle", audio=None)
+        if path in ("/spoken", "/interrupt"):
+            with LOCK:
+                want = payload.get("seq")
+                if want is not None and int(want) != STATE["seq"]:
+                    return self._json({"ok": True, "ignored": "stale seq"})
+                if STATE["agent"] == "thinking":
+                    return self._json({"ok": True, "ignored": "turn in flight"})
+                STATE.update(agent="idle", audio=None)
             return self._json({"ok": True})
 
         return self._json({"error": "not found"}, 404)

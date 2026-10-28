@@ -297,13 +297,18 @@
 
   /* ------------------------------------------------------------ audio */
   let ac = null, analyser = null, audioEl = null, sourceNode = null, rafAmp = 0;
+  let lastSeq = null;   /* the turn this page is currently showing */
 
   function ensureAudioGraph() {
     if (audioEl) return;
     audioEl = new Audio();
     audioEl.crossOrigin = 'anonymous';
     audioEl.addEventListener('ended', () => {
-      fetch('/spoken', { method: 'POST' });
+      fetch('/spoken', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ seq: lastSeq }),   /* a stale turn must not clear the live one */
+      });
       api().setAmp(0);
     });
     try {
@@ -388,6 +393,7 @@
     try {
       const r = await fetch('/state', { cache: 'no-store' });
       const st = await r.json();
+      if (st.seq !== undefined) lastSeq = st.seq;
 
       // state arbitration: dictation outranks the agent, agent outranks idle
       let state = 'idle';
