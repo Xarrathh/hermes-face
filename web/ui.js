@@ -32,6 +32,25 @@
   function setP(key, value) {
     P[key] = value;
     api().setParams({ [key]: value });
+    if (key === 'effect') applyEffectGate();
+  }
+
+  // Only show the settings that belong to the chosen effect
+  function applyEffectGate() {
+    const cur = Number(P.effect ?? 0);
+    for (const row of document.querySelectorAll('#paramGroups .row[data-effect]')) {
+      row.hidden = Number(row.dataset.effect) !== cur;
+    }
+    // a group whose rows are all gated away hides its heading too
+    for (const h of document.querySelectorAll('#paramGroups h2')) {
+      let node = h.nextElementSibling;
+      let any = false;
+      while (node && node.tagName !== 'H2') {
+        if (node.classList && node.classList.contains('row') && !node.hidden) any = true;
+        node = node.nextElementSibling;
+      }
+      h.hidden = !any;
+    }
   }
 
   function fmt(v, step) {
@@ -49,6 +68,7 @@
       for (const p of g.params) {
         const row = document.createElement('div');
         row.className = 'row';
+        if (p.effect !== undefined) row.dataset.effect = String(p.effect);
 
         // a select (hair style) is a choice, not a range
         if (p.kind === 'select') {
@@ -107,6 +127,7 @@
       ph.appendChild(b);
     }
     syncInputs();
+    applyEffectGate();
   }
 
   function syncInputs() {
@@ -136,6 +157,7 @@
     P = Object.assign(base, over);
     api().setParams(P);
     syncInputs();
+    applyEffectGate();
     queueSave();
   }
 

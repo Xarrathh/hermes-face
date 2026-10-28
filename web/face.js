@@ -334,13 +334,13 @@
       let dir = Math.floor(Math.random() * 8);
       const segs = 3 + Math.floor(Math.random() * 5);
       for (let i = 0; i < segs; i++) {
-        const step = rnd(0.05, 0.15);
+        const step = rnd(0.09, 0.22);
         const [, ] = dirs[dir];
         const nx = pts[pts.length - 1][0] + dU(dirs[dir][0] * step);
         const ny = pts[pts.length - 1][1] + dV(dirs[dir][1] * step * 0.85);
         if (!inside(nx, ny)) break;
         pts.push([nx, ny]);
-        if (Math.random() < 0.55) dir = (dir + (Math.random() < 0.5 ? 1 : 7)) % 8;
+        if (Math.random() < 0.32) dir = (dir + (Math.random() < 0.5 ? 1 : 7)) % 8;
       }
       if (pts.length < 3) continue;
 
@@ -350,7 +350,7 @@
         len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
         acc.push(len);
       }
-      const nEl = 1 + Math.floor(Math.random() * 2);
+      const nEl = Math.random() < 0.75 ? 1 : 2;
       const electrons = [];
       for (let k = 0; k < nEl; k++) electrons.push({ s0: rnd(0, len), v: rnd(0.55, 1.35) });
       CIRCUIT.traces.push({ pts, acc, len, electrons });
@@ -432,7 +432,7 @@
 
   function buildMotes() {
     MOTES.list = [];
-    const n = 90;
+    const n = 160;
     for (let i = 0; i < n; i++) {
       MOTES.list.push({
         u: rnd(-0.95, 0.95), v: rnd(0.04, 0.98),
@@ -447,7 +447,8 @@
     ctx.save();
     ctx.clip(hp);
     ctx.globalCompositeOperation = 'lighter';
-    const lat = 18;
+    const wd = clamp(P.wireDensity ?? 1, 0.3, 2.2);
+    const lat = Math.round(18 * wd);
     for (let i = 1; i < lat; i++) {
       const v = i / lat;
       const hw = halfWidth(v) * 0.985;
@@ -465,8 +466,9 @@
       ctx.quadraticCurveTo(ux(0), vy(v) + sag, ux(hw), vy(v));
       ctx.stroke();
     }
-    for (let j = 1; j <= 7; j++) {
-      const u0 = Math.cos(Math.PI * j / 8);
+    const merid = Math.max(3, Math.round(7 * wd));
+    for (let j = 1; j <= merid; j++) {
+      const u0 = Math.cos(Math.PI * j / (merid + 1));
       ctx.beginPath();
       for (let i = 0; i <= 44; i++) {
         const v = i / 44;
@@ -479,7 +481,7 @@
       ctx.stroke();
     }
     // a slow scan band, so a static shell still has life
-    const k = (t * 0.06) % 1;
+    const k = (t * 0.06 * clamp(P.wireSweep ?? 1, 0.2, 3)) % 1;
     const y = vy(0.02 + k * 0.96);
     const sg = ctx.createLinearGradient(0, y - dV(0.05), 0, y + dV(0.02));
     sg.addColorStop(0, rgba(COL.main, 0));
@@ -493,11 +495,14 @@
   function drawMotes(hp, t) {
     if (!MOTES.ready) buildMotes();
     const amt = Math.min(1.4, 0.6 + (P.glow ?? 1) * 0.4);
+    const count = Math.min(MOTES.list.length, Math.round(MOTES.list.length * clamp(P.moteCount ?? 1, 0.1, 2)));
+    const mSpeed = clamp(P.moteSpeed ?? 1, 0.2, 3);
     ctx.save();
     ctx.clip(hp);
     ctx.globalCompositeOperation = 'lighter';
-    for (const m of MOTES.list) {
-      const v = 0.98 - (((0.98 - m.v) + t * m.sp) % 0.96);     // drifts upward
+    for (let i = 0; i < count; i++) {
+      const m = MOTES.list[i];
+      const v = 0.98 - (((0.98 - m.v) + t * m.sp * mSpeed) % 0.96);   // drifts upward
       const hw = halfWidth(v) * 0.94;
       const x = ux(m.u * hw);
       const y = vy(v);

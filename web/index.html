@@ -110,6 +110,8 @@
     border-top: 1px solid rgba(80, 190, 210, 0.12); padding-top: 12px;
   }
   .row { display: grid; grid-template-columns: 1fr 46px; gap: 6px; align-items: center; margin: 7px 0; }
+  /* .row's display:grid outranks the UA's [hidden] rule, so be explicit */
+  .row[hidden], #paramGroups h2[hidden] { display: none; }
   .row label {
     grid-column: 1 / -1; display: flex; justify-content: space-between;
     font-size: 10.5px; letter-spacing: 0.08em; color: rgba(160, 225, 238, 0.72);
