@@ -39,6 +39,7 @@
     "earOut": 1.0,
     "earTilt": -0.05,
     "transparency": 1.0,
+    "effect": 0,
     "hue": 329.0,
     "sat": 1.0,
     "glow": 2.0,
