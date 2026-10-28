@@ -24,6 +24,8 @@
   const FIXED_AMP = QS.has('amp') ? Number(QS.get('amp')) : null;
 
   const TAU = Math.PI * 2;
+  const BLENDS = ['lighter', 'screen', 'source-over', 'overlay'];
+  const blendOp = () => BLENDS[clamp(Math.round(P.blend ?? 0), 0, BLENDS.length - 1)];
   const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
   const lerp = (a, b, t) => a + (b - a) * t;
   const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -97,7 +99,6 @@
     layout();
     rebuildGeometry();
     buildRain();
-    buildFaceField();
   }
 
   /* ---------------------------------------------------------------- anatomy */
@@ -385,105 +386,21 @@
       c.globalAlpha = Math.min(1, col.b * 1.18);
       c.drawImage(RAIN.atlas, gi * gw, 0, gw, gh, Math.round(col.x), Math.round(col.y), gw, gh);
       // a brighter head glyph, the classic matrix tick
-      c.globalAlpha = Math.min(1, col.b + 0.35);
+      c.globalAlpha = Math.min(1, col.b + 0.45);
       c.fillStyle = rgba(COL.core, 0.9);
       c.fillRect(Math.round(col.x + gw * 0.25), Math.round(col.y + gh * 0.86), Math.round(gw * 0.5), 2);
     }
     c.globalAlpha = 1;
   }
 
-  function drawRain(alpha, clipPath) {
+  function drawRain(alpha, clipPath, op) {
     if (!RAIN.ready || alpha <= 0.01) return;
     ctx.save();
     if (clipPath) ctx.clip(clipPath);
-    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalCompositeOperation = op || blendOp();
     ctx.globalAlpha = Math.min(1, alpha);
     ctx.drawImage(RAIN.buf, 0, 0);
     ctx.restore();
-  }
-
-  /* ---------------------------------------------------------------- glyph field */
-  // The face is not a surface with rain on it: it is a field of characters. Cells are
-  // laid out over the head bounding box, kept only if their centre falls inside the
-  // silhouette, and each carries a mask factor (bright near the edge, quiet in the
-  // middle so the features still read). Redrawn at ~12 Hz, blitted every frame.
-  const FIELD = {
-    cv: document.createElement('canvas'), c: null, atlas: null,
-    cells: [], gw: 12, gh: 16, w: 0, h: 0, x0: 0, y0: 0, last: -1, ready: false,
-  };
-
-  function buildFaceField() {
-    const geo = headPath();
-    const scratch = document.createElement('canvas').getContext('2d');
-    const pitch = Math.max(9, Math.round(HEAD.w / 34));
-    const gw = pitch;
-    const gh = Math.round(pitch * 1.32);
-    FIELD.gw = gw; FIELD.gh = gh;
-
-    const pad = gw * 2;
-    FIELD.w = Math.ceil(HEAD.w + pad * 2);
-    FIELD.h = Math.ceil(HEAD.h + pad * 2);
-    FIELD.x0 = Math.round(HEAD.cx - FIELD.w / 2);
-    FIELD.y0 = Math.round(HEAD.cy - FIELD.h / 2);
-    FIELD.cv.width = FIELD.w;
-    FIELD.cv.height = FIELD.h;
-    FIELD.c = FIELD.cv.getContext('2d');
-
-    // atlas at this cell size
-    const atlas = document.createElement('canvas');
-    atlas.width = gw * RAIN.count;
-    atlas.height = gh;
-    const a = atlas.getContext('2d');
-    a.font = `500 ${Math.round(gh * 0.82)}px "JetBrainsMono Nerd Font", monospace`;
-    a.textAlign = 'center';
-    a.textBaseline = 'middle';
-    a.fillStyle = rgba(COL.main, 1);
-    for (let i = 0; i < RAIN.count; i++) {
-      a.fillText(GLYPHS[(i * 5 + 1) % GLYPHS.length], i * gw + gw / 2, gh * 0.53);
-    }
-    FIELD.atlas = atlas;
-
-    FIELD.cells = [];
-    const cols = Math.ceil(FIELD.w / gw);
-    const rows = Math.ceil(FIELD.h / gh);
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const lx = c * gw + gw / 2;
-        const ly = r * gh + gh / 2;
-        const px = FIELD.x0 + lx;
-        const py = FIELD.y0 + ly;
-        if (!scratch.isPointInPath(geo, px, py)) continue;
-        // mask: quiet in the middle of the face, alive at the edges
-        const dx = (px - HEAD.cx) / (HEAD.w / 2);
-        const dy = (py - (HEAD.cy + HEAD.h * 0.06)) / (HEAD.h / 2);
-        const rad = Math.min(1, Math.hypot(dx * 0.95, dy * 0.85));
-        const mask = 0.20 + 0.80 * smoothstep(0.12, 0.85, rad);
-        FIELD.cells.push({
-          x: Math.round(c * gw), y: Math.round(r * gh),
-          g: Math.floor(Math.random() * RAIN.count),
-          ph: Math.random() * TAU,
-          mask,
-        });
-      }
-    }
-    FIELD.ready = true;
-    FIELD.last = -1;
-  }
-
-  function renderFaceField(t) {
-    if (!FIELD.ready || !FIELD.c) return;
-    if (t - FIELD.last < 0.085 && FIELD.last > 0) return;    // ~12 Hz
-    FIELD.last = t;
-    const c = FIELD.c;
-    const { gw, gh } = FIELD;
-    c.clearRect(0, 0, FIELD.w, FIELD.h);
-    for (const cell of FIELD.cells) {
-      // glyphs swap now and then, and each flickers on its own phase
-      const flick = 0.55 + 0.45 * Math.sin(t * 3.3 + cell.ph);
-      c.globalAlpha = Math.min(1, cell.mask * flick * 0.95);
-      c.drawImage(FIELD.atlas, cell.g * gw, 0, gw, gh, cell.x, cell.y, gw, gh);
-    }
-    c.globalAlpha = 1;
   }
 
   /* ---------------------------------------------------------------- backdrop */
@@ -495,9 +412,9 @@
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, VW, VH);
 
-    // the room is code too, just further away
-    const rain = P.rain ?? 0.95;
-    drawRain(0.15 * rain);
+    // the room is the same code, further away
+    const rain = P.rain ?? 0.32;
+    drawRain(rain, null, blendOp());
 
     // horizon glow, so the rain has a floor to stand on
     const horizon = VH * 0.80;
@@ -691,39 +608,7 @@
     ctx.fillStyle = g;
     ctx.fillRect(ux(-1.1), vy(-0.1), dU(2.2), dV(hv + 0.16));
 
-    // strands
-    ctx.strokeStyle = rgba(COL.main, 0.42 * density * glow);
-    ctx.lineWidth = 1;
-    for (let i = -12; i <= 12; i++) {
-      const x0 = ux(i / 12.5);
-      const ragged = hv - 0.052 - 0.055 * (0.5 + 0.5 * Math.sin(i * 2.37 + 1.1));
-      ctx.beginPath();
-      ctx.moveTo(x0, vy(Math.max(-0.01, ragged)));
-      if (style === 8) {
-        const wob = dU(0.012);
-        ctx.bezierCurveTo(x0 + wob, vy(hv * 0.30), x0 - wob, vy(hv * 0.52), x0 + wob * 0.6, vy(hv * 0.72));
-        ctx.bezierCurveTo(x0 - wob * 0.5, vy(hv * 0.86), x0 + wob * 0.3, vy(hv * 0.94), x0, vy(hv));
-      } else if (style === 3) {
-        ctx.bezierCurveTo(x0 * 1.04, vy(hv * 0.35), x0 * 0.92, vy(hv * 0.72), x0 * 1.10, vy(hv));
-      } else {
-        ctx.quadraticCurveTo(x0 * 1.03, vy(hv * 0.55), x0 * (1 + 0.02 * (i % 2 ? 1 : -1)), vy(hv));
-      }
-      ctx.stroke();
-    }
-    // a second, dimmer pass along the lower half hides the cut at the top of the band
-    ctx.strokeStyle = rgba(COL.main, 0.24 * density * glow);
-    for (let i = -12; i <= 12; i++) {
-      const x0 = ux(i / 12.5);
-      ctx.beginPath();
-      ctx.moveTo(x0, vy(hv - 0.048));
-      if (style === 8) {
-        const wob = dU(0.012);
-        ctx.bezierCurveTo(x0 + wob * 0.5, vy(hv * 0.86), x0 - wob * 0.5, vy(hv * 0.94), x0, vy(hv));
-      } else {
-        ctx.quadraticCurveTo(x0 * 1.02, vy(hv * 0.82), x0, vy(hv));
-      }
-      ctx.stroke();
-    }
+    // no regular strand comb: the rain is the texture
     ctx.restore();
 
     // shadow on the forehead: clipping the cap shifted down makes its edge follow
@@ -913,13 +798,18 @@
 
     drawHairFront();
 
-    // the face itself: a field of glyphs, brightest at its edges
-    if (FIELD.ready) {
+    // the same falling rain, bright where it crosses the face and dim in the room:
+    // one system, modulated by the silhouette rather than a second texture
+    if (RAIN.ready && (P.faceRain ?? 1.3) > 0.02) {
+      const fa = P.faceRain ?? 1.3;
       ctx.save();
       ctx.clip(hp);
-      ctx.globalCompositeOperation = 'lighter';
-      ctx.globalAlpha = Math.min(1, 1.25 * (P.rain ?? 0.95));
-      ctx.drawImage(FIELD.cv, FIELD.x0, FIELD.y0);
+      ctx.globalCompositeOperation = blendOp();
+      const passes = fa > 1 ? 2 : 1;
+      for (let i = 0; i < passes; i++) {
+        ctx.globalAlpha = Math.min(1, i === 0 ? Math.min(1, fa) : fa - 1);
+        ctx.drawImage(RAIN.buf, 0, 0);
+      }
       ctx.restore();
     }
 
@@ -1456,7 +1346,6 @@
 
     updateSenses(dt, t);
     rainStep(dt, (P.rainSpeed ?? 1));
-    renderFaceField(S.t);
 
     drawBackdrop(t);
 
@@ -1549,7 +1438,7 @@
     if (COL.main.join() !== hueBefore || COL.core.join() !== satBefore) buildRain();
     layout();
     rebuildGeometry();
-    buildFaceField();
+    buildRain();
   }
 
   window.__face = {
