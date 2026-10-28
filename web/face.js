@@ -24,8 +24,7 @@
   const FIXED_AMP = QS.has('amp') ? Number(QS.get('amp')) : null;
 
   const TAU = Math.PI * 2;
-  const BLENDS = ['lighter', 'screen', 'source-over', 'overlay'];
-  const blendOp = () => BLENDS[clamp(Math.round(P.blend ?? 0), 0, BLENDS.length - 1)];
+
   const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
   const lerp = (a, b, t) => a + (b - a) * t;
   const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -407,11 +406,11 @@
     c.globalAlpha = 1;
   }
 
-  function drawRain(alpha, clipPath, op) {
+  function drawRain(alpha, clipPath) {
     if (!RAIN.ready || alpha <= 0.01) return;
     ctx.save();
     if (clipPath) ctx.clip(clipPath);
-    ctx.globalCompositeOperation = op || blendOp();
+    ctx.globalCompositeOperation = 'lighter';
     ctx.globalAlpha = Math.min(1, alpha);
     ctx.drawImage(RAIN.buf, 0, 0);
     ctx.restore();
@@ -428,7 +427,7 @@
 
     // the room is the same code, further away
     const rain = P.rain ?? 0.32;
-    drawRain(rain, null, blendOp());
+    drawRain(rain);
 
     // horizon glow, so the rain has a floor to stand on
     const horizon = VH * 0.80;
@@ -814,17 +813,21 @@
 
     // the same falling rain, bright where it crosses the face and dim in the room:
     // one system, modulated by the silhouette rather than a second texture
-    if (RAIN.ready && (P.faceRain ?? 1.3) > 0.02) {
-      const fa = P.faceRain ?? 1.3;
-      ctx.save();
-      ctx.clip(hp);
-      ctx.globalCompositeOperation = blendOp();
-      const passes = fa > 1 ? 2 : 1;
-      for (let i = 0; i < passes; i++) {
-        ctx.globalAlpha = Math.min(1, i === 0 ? Math.min(1, fa) : fa - 1);
-        ctx.drawImage(RAIN.buf, 0, 0);
+    if (RAIN.ready) {
+      // transparency * faceRain = how much code the face carries; whole passes stack,
+      // so the top of the slider is genuinely brighter instead of clamping at 1
+      const total = Math.max(0, (P.faceRain ?? 2.6) * (P.transparency ?? 0.9));
+      if (total > 0.02) {
+        ctx.save();
+        ctx.clip(hp);
+        ctx.globalCompositeOperation = 'lighter';
+        const passes = Math.ceil(total);
+        for (let i = 0; i < passes; i++) {
+          ctx.globalAlpha = Math.min(1, total - i);
+          ctx.drawImage(RAIN.buf, 0, 0);
+        }
+        ctx.restore();
       }
-      ctx.restore();
     }
 
     // scan band
@@ -979,7 +982,13 @@
     ctx.fillRect(-hw, -hh * 1.4, hw * 2, hh * 1.5);
     ctx.restore();
 
-    // lids
+    // lids: a dark stroke underneath keeps them readable over bright code
+    ctx.strokeStyle = 'rgba(0,3,5,0.75)';
+    ctx.lineWidth = 3.6;
+    ctx.beginPath();
+    ctx.moveTo(-hw, 0);
+    ctx.bezierCurveTo(-hw * 0.46, -hh * 1.32, hw * 0.38, -hh * 1.26, hw, -hh * 0.08);
+    ctx.stroke();
     ctx.strokeStyle = rgba(COL.core, 0.72 * glow);
     ctx.lineWidth = 1.9;
     ctx.lineJoin = 'round';
@@ -1297,7 +1306,7 @@
 
     // seam: dark line with a thin bright inner edge
     ctx.strokeStyle = 'rgba(0,3,5,0.95)';
-    ctx.lineWidth = 2.6;
+    ctx.lineWidth = 3.4;
     ctx.beginPath();
     for (let i = 0; i <= N; i++) {
       const x = xAt(i);
@@ -1371,33 +1380,7 @@
     drawShell(t, hp);
     drawEars();
 
-    ctx.save();
-    ctx.clip(hp);
-    // quiet cut-outs behind the feature bands: the code stays dense on the cheeks
-    // and skull, but the eyes and mouth get a dark backing to read against
-    for (const [vc, rx, ry, alpha] of [[P.eyeY ?? 0.5, 0.74, 0.090, 0.60],
-                                       [(P.noseTop ?? 0.5) + 0.135, 0.42, 0.150, 0.50]]) {
-      const g2 = ctx.createRadialGradient(ux(0), vy(vc), 1, ux(0), vy(vc), dU(rx));
-      g2.addColorStop(0, `rgba(2,9,13,${alpha})`);
-      g2.addColorStop(0.7, `rgba(2,9,13,${alpha * 0.55})`);
-      g2.addColorStop(1, 'rgba(2,9,13,0)');
-      ctx.save();
-      ctx.translate(ux(0), vy(vc));
-      ctx.scale(1, dV(ry) / dU(rx));
-      ctx.translate(-ux(0), -vy(vc));
-      ctx.fillStyle = g2;
-      ctx.fillRect(ux(-rx), vy(vc) - dU(rx), dU(rx * 2), dU(rx * 2));
-      ctx.restore();
-    }
-    if (!OFF.has('hair')) drawHairSides();
-    if (!OFF.has('eyes')) { drawEye(-1, t); drawEye(1, t); }
-    if (!OFF.has('brows')) { drawBrow(-1); drawBrow(1); }
-    if (!OFF.has('nose')) drawNose();
-    if (!OFF.has('mouth')) drawMouth();
-    ctx.restore();
-    ctx.restore();
-
-    // thinking ring
+    // thinking ring (under the face, so the features stay on top)
     if (S.think > 0.02) {
       ctx.save();
       ctx.globalCompositeOperation = 'lighter';
@@ -1425,6 +1408,16 @@
       ctx.stroke();
       ctx.restore();
     }
+
+    ctx.save();
+    ctx.clip(hp);
+    if (!OFF.has('hair')) drawHairSides();
+    if (!OFF.has('eyes')) { drawEye(-1, t); drawEye(1, t); }
+    if (!OFF.has('brows')) { drawBrow(-1); drawBrow(1); }
+    if (!OFF.has('nose')) drawNose();
+    if (!OFF.has('mouth')) drawMouth();
+    ctx.restore();
+    ctx.restore();
 
     // vignette (cached per resize; scanlines live in CSS, not 360 fillRects a frame)
     if (!G.vignette) {
