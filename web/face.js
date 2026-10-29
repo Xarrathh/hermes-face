@@ -89,7 +89,10 @@
     HEAD.h = h;
     HEAD.w = w;
     HEAD.cx = VW * 0.5;
-    HEAD.cy = VH * 0.435;
+    // the visible head is shorter when the forehead is squeezed, so shift the centre by
+    // half of what was lost -- otherwise the face sits low with a gap over its head
+    const crown = clamp(P.forehead ?? 1, 0.5, 1.5);
+    HEAD.cy = VH * 0.435 - (0.46 * (1 - crown) * h) / 2;
   }
 
   function resize() {
@@ -165,6 +168,15 @@
       if (v > 0.66) vv = 0.66 + (v - 0.66) * chinLen;
       return [uu * shape(v), vv];
     });
+    // Forehead: everything above the brow is pulled toward a fixed pivot, so a smaller
+    // value shortens the skull and a larger one builds it up. The features live in v and
+    // are not touched, which is why this changes the forehead and nothing else.
+    const crown = clamp(P.forehead ?? 1, 0.5, 1.5);
+    if (Math.abs(crown - 1) > 0.001) {
+      const pivot = clamp((P.eyeY ?? 0.5) - 0.05, 0.26, 0.54);
+      pts = pts.map(([u, v]) => (v < pivot ? [u, pivot - (pivot - v) * crown] : [u, v]));
+    }
+
     const vEnd = pts[pts.length - 1][1];
     pts = pts.map(([u, v]) => [u, v / vEnd]);
     G.pts = pts;

@@ -72,6 +72,14 @@
           "max": 1.25,
           "step": 0.005,
           "default": 1.0
+        },
+        {
+          "key": "forehead",
+          "label": "Forehead",
+          "min": 0.5,
+          "max": 1.5,
+          "step": 0.01,
+          "default": 1.0
         }
       ]
     },
@@ -620,7 +628,8 @@
       "earTilt": 0.12,
       "jawDrop": 1.2,
       "matLightY": 0.42,
-      "matLightSpread": 0.26
+      "matLightSpread": 0.26,
+      "forehead": 0.88
     },
     "Male \u00b7 Sharp": {
       "hue": 168,
@@ -677,7 +686,8 @@
       "earTilt": 0.02,
       "jawDrop": 1.25,
       "matLightY": 0.42,
-      "matLightSpread": 0.26
+      "matLightSpread": 0.26,
+      "forehead": 0.88
     },
     "Male \u00b7 Weathered": {
       "hue": 122,
@@ -735,7 +745,8 @@
       "blinkRate": 0.7,
       "breath": 0.8,
       "matLightY": 0.42,
-      "matLightSpread": 0.26
+      "matLightSpread": 0.26,
+      "forehead": 0.88
     },
     "Male \u00b7 Young": {
       "hue": 141,
@@ -791,7 +802,8 @@
       "jawDrop": 1.0,
       "blinkRate": 0.6,
       "matLightY": 0.42,
-      "matLightSpread": 0.26
+      "matLightSpread": 0.26,
+      "forehead": 0.88
     },
     "Male \u00b7 Deep-set": {
       "hue": 178,
@@ -847,7 +859,8 @@
       "jawDrop": 1.2,
       "gaze": 0.3,
       "matLightY": 0.42,
-      "matLightSpread": 0.26
+      "matLightSpread": 0.26,
+      "forehead": 0.88
     },
     "Female \u00b7 Soft": {
       "hue": 136,
@@ -903,7 +916,8 @@
       "jawDrop": 0.85,
       "blinkRate": 0.55,
       "matLightY": 0.42,
-      "matLightSpread": 0.26
+      "matLightSpread": 0.26,
+      "forehead": 0.85
     },
     "Female \u00b7 Sleek": {
       "hue": 174,
@@ -958,7 +972,8 @@
       "earOut": 0.25,
       "jawDrop": 0.85,
       "matLightY": 0.42,
-      "matLightSpread": 0.26
+      "matLightSpread": 0.26,
+      "forehead": 0.85
     },
     "Female \u00b7 Bold": {
       "hue": 112,
@@ -1014,7 +1029,8 @@
       "jawDrop": 0.95,
       "blinkRate": 0.5,
       "matLightY": 0.42,
-      "matLightSpread": 0.26
+      "matLightSpread": 0.26,
+      "forehead": 0.85
     },
     "Female \u00b7 Elder": {
       "hue": 120,
@@ -1071,7 +1087,8 @@
       "blinkRate": 0.75,
       "browMotion": 0.45,
       "matLightY": 0.42,
-      "matLightSpread": 0.26
+      "matLightSpread": 0.26,
+      "forehead": 0.85
     },
     "Female \u00b7 Cool": {
       "hue": 201,
@@ -1127,7 +1144,8 @@
       "gaze": 0.35,
       "headTurn": 0.35,
       "matLightY": 0.42,
-      "matLightSpread": 0.26
+      "matLightSpread": 0.26,
+      "forehead": 0.85
     },
     "Robot": {
       "hue": 190,
