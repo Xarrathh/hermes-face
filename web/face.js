@@ -1391,7 +1391,11 @@
         // ... and then re-centre it as absolute tone: 0.28 is unlit skin, the deltas
         // carry it up to the highlights and down to the shadow side. The cells measure
         // this value directly, so this number is the face's exposure, not a hint.
-        const val = clamp(0.18 + (s - 0.5) * 1.85, 0, 1) * 255;
+        // Clamp the field below 1.0 before mapping: the key light, the cheek catch and
+        // the cheekbones all add, and where the sum passes 1 the tone saturates into a
+        // flat plateau with a hard edge -- visible as polygonal patches once the tone
+        // bands are posterised.
+        const val = clamp(0.18 + (clamp(s, 0.05, 0.92) - 0.5) * 1.85, 0, 1) * 255;
         const o = (r * cols + c) * 4;
         out[o] = val; out[o + 1] = val; out[o + 2] = val; out[o + 3] = 255;
       }
