@@ -12,8 +12,8 @@ Everything on the face is driven by one flat parameter set in
 Two faces were built separately and both worked. This is the merge:
 
 * **the head from `hermes-face`** — the parametric anatomy. Face shape and
-  silhouette, eyes with iris/pupil/lashes, brows, nose, mouth, ears, hair,
-  breathing, blinking, saccades, jaw driven by the voice, and a mood tag per
+  silhouette, eyes with iris/pupil/lashes, brows, nose, mouth, ears, breathing,
+  blinking, saccades, jaw driven by the voice, and a mood tag per
   reply (`[warm]`, `[amused]`, …) that eases expression offsets onto the tuned
   look without overwriting it.
 * **the surface from the first Rynette face** — the Matrix pass. A grid of
@@ -46,8 +46,8 @@ the editor still in charge.
 How it is built, in `web/face.js`:
 
 1. **The anatomy is rendered onto its own transparent layer** (`LAYER`), with `ctx`
-   swapped for the pass: the shell shading, the sculpt, the ears, no room, no rain,
-   no outline. Every draw function already uses `ctx`, so swapping the target is the
+   swapped for the pass: one flat base, the sculpt, the ears — no room, no rain, no
+   outline, no shell lighting. Every draw function already uses `ctx`, so swapping the target is the
    whole refactor.
 2. **`drawSculpt()` paints the definition in.** Measuring this project's shell alone
    gives a flat green mask — its glass is fairly even. So the original face's tonal
@@ -64,6 +64,10 @@ How it is built, in `web/face.js`:
    dither give it the texture of cloth instead of noise.
 4. **The vector features go on top at full resolution** — eyes with iris, pupil and
    catchlight, brows, nose, mouth. The cells give volume; the vectors give features.
+
+Hair was removed outright at Pierre's request (the style select, hairline, hairline
+shape, darkness and part line, and the two draw passes): this face is bald by design,
+and the hairline band was adding a shadow the cells then measured.
 
 `Surface` in the panel switches between **Cells (Rynette)** and the original
 **Hologram** mode (wire/motes/circuit/matrix-glyph shell, projector rings, rim light),

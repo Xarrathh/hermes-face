@@ -72,65 +72,6 @@
           "max": 1.25,
           "step": 0.005,
           "default": 1.0
-        },
-        {
-          "key": "hairline",
-          "label": "Hairline",
-          "min": 0.18,
-          "max": 0.44,
-          "step": 0.002,
-          "default": 0.245
-        },
-        {
-          "key": "hairEdge",
-          "label": "Hairline shape",
-          "kind": "select",
-          "options": [
-            "None",
-            "Straight",
-            "Widow's peak",
-            "Receding",
-            "Sweep",
-            "M-shape",
-            "Rounded",
-            "Jagged"
-          ],
-          "default": 2
-        },
-        {
-          "key": "hairDark",
-          "label": "Hairline darkness",
-          "min": 0.0,
-          "max": 2.0,
-          "step": 0.01,
-          "default": 1.0
-        },
-        {
-          "key": "hairStyle",
-          "label": "Style",
-          "kind": "select",
-          "default": 2,
-          "options": [
-            "Bald",
-            "Buzz cut",
-            "Short"
-          ]
-        },
-        {
-          "key": "hair",
-          "label": "Hair density",
-          "min": 0.0,
-          "max": 1.0,
-          "step": 0.01,
-          "default": 0.85
-        },
-        {
-          "key": "hairPart",
-          "label": "Part line",
-          "min": 0.0,
-          "max": 1.0,
-          "step": 0.01,
-          "default": 0.62
         }
       ]
     },
@@ -764,8 +705,6 @@
       "cupid": 0.7,
       "earSize": 0.88,
       "earOut": 0.34,
-      "hairStyle": 2,
-      "hairline": 0.235,
       "jawDrop": 0.9,
       "effect": 0,
       "wireDensity": 0.85,
@@ -789,8 +728,6 @@
       "mouthWidth": 0.2,
       "lipFullness": 1.4,
       "cupid": 0.75,
-      "hairStyle": 2,
-      "hairline": 0.205,
       "earSize": 0.84,
       "earOut": 0.26,
       "jawDrop": 0.9,
@@ -817,8 +754,6 @@
       "lipFullness": 0.8,
       "earSize": 1.1,
       "earOut": 0.72,
-      "hairStyle": 2,
-      "hairline": 0.23,
       "jawDrop": 1.18,
       "effect": 0,
       "wireDensity": 0.85,
@@ -839,8 +774,6 @@
       "noseWidth": 0.175,
       "mouthWidth": 0.235,
       "lipFullness": 1.2,
-      "hairStyle": 2,
-      "hairline": 0.225,
       "jawDrop": 1.0,
       "effect": 0,
       "wireDensity": 0.85,
@@ -868,8 +801,6 @@
       "lipFullness": 0.7,
       "earSize": 0.72,
       "earOut": 0.3,
-      "hairStyle": 1,
-      "hair": 0.55,
       "hue": 168,
       "sat": 0.6,
       "scan": 0.8,
@@ -888,7 +819,6 @@
       "mouthWidth": 0.235,
       "smile": 0.22,
       "lipFullness": 1.1,
-      "hairStyle": 2,
       "hue": 196,
       "sat": 0.55,
       "glow": 1.35,
@@ -902,8 +832,6 @@
       "effect": 3,
       "circuitDensity": 1.35,
       "electronSpeed": 1.2,
-      "hairStyle": 1,
-      "hair": 0.55,
       "lashes": 0.3,
       "hue": 32,
       "sat": 0.95,
@@ -917,7 +845,6 @@
       "effect": 0,
       "wireDensity": 1.65,
       "wireSweep": 0.55,
-      "hairStyle": 0,
       "lashes": 0,
       "hue": 208,
       "sat": 0.9,
@@ -930,8 +857,6 @@
       "effect": 1,
       "moteCount": 1.7,
       "moteSpeed": 0.55,
-      "hairStyle": 2,
-      "hair": 0.7,
       "lashes": 0.9,
       "hue": 286,
       "sat": 0.75,
@@ -951,9 +876,7 @@
       "matrixDensity": 1.45,
       "matrixSpeed": 1.15,
       "matrixTrail": 1.25,
-      "headWidth": 0.98,
-      "hairStyle": 1,
-      "hair": 0.35
+      "headWidth": 0.98
     },
     "Rynette": {
       "matPortrait": 0,
@@ -974,8 +897,6 @@
       "effect": 4,
       "scan": 0.0,
       "bgLevel": 0.0,
-      "hairStyle": 0,
-      "hair": 0.0,
       "lashes": 1.2,
       "transparency": 1.0,
       "faceShape": 0,
