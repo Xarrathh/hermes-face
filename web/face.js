@@ -1388,7 +1388,10 @@
 
         // fade the relief out at the silhouette, or it draws its own hard edge
         s = 0.5 + (s - 0.5) * clamp((1 - nx) / 0.14, 0, 1);
-        const val = clamp(s, 0, 1) * 255;
+        // ... and then re-centre it as absolute tone: 0.28 is unlit skin, the deltas
+        // carry it up to the highlights and down to the shadow side. The cells measure
+        // this value directly, so this number is the face's exposure, not a hint.
+        const val = clamp(0.18 + (s - 0.5) * 1.85, 0, 1) * 255;
         const o = (r * cols + c) * 4;
         out[o] = val; out[o + 1] = val; out[o + 2] = val; out[o + 3] = 255;
       }
@@ -1402,8 +1405,11 @@
     if (amt < 0.01) return;
     buildSculpt();
     ctx.save();
-    ctx.clip(hp);              // relief belongs to the head, not to the room
-    ctx.globalCompositeOperation = 'overlay';
+    ctx.clip(hp);              // the field belongs to the head, not to the room
+    // source-over, not overlay: this map IS the head's tone. Overlaying it on the
+    // shell's own washes meant two lighting models fighting, and the cells measured
+    // the winner rather than the face.
+    ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = Math.min(1, amt);
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(SCULPT.cv, SCULPT.bx, SCULPT.by, SCULPT.bw, SCULPT.bh);
@@ -1541,6 +1547,18 @@
 
     ctx.save();
     ctx.clip(hp);
+
+    if (PORTRAIT) {
+      // Cell mode draws ONE flat base and nothing else. Every wash, key light and
+      // shadow here is an effect of the hologram, and each of them tints the
+      // measurement, so the cells stop being the face's tone and become the shell's.
+      // The base is mid-dark grey on purpose: 'overlay' sculpts up from a mid tone,
+      // and over near-black the relief collapses.
+      ctx.fillStyle = '#484848';
+      ctx.fillRect(ux(-1.15), vy(-0.15), dU(2.3), dV(1.4));
+      ctx.restore();
+      return;
+    }
 
     // dark glass body: the head occludes the room behind it
     const bg = ctx.createRadialGradient(cx - dU(0.16), vy(0.34), dU(0.03), cx, vy(0.52), dU(1.15));
