@@ -1,0 +1,23 @@
+[Unit]
+Description=Hermes face — holographic head bridge (127.0.0.1:@PORT@)
+Documentation=file:@PREFIX@/INSTALL.md
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=@PREFIX@
+ExecStart=@PYTHON@ @PREFIX@/server.py
+Environment="PATH=@HERMES_BINDIR@:/usr/local/bin:/usr/bin:/bin"
+Environment="HERMES_HOME=@HERMES_HOME@"
+Environment="HERMES_BIN=@HERMES_BIN@"
+Environment="HERMES_FACE_PORT=@PORT@"
+Environment="PYTHONUNBUFFERED=1"
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

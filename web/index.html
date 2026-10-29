@@ -30,14 +30,9 @@
 
   /* hud */
   #hud { position: absolute; inset: 0; pointer-events: none; }
-  #brand {
-    position: absolute; top: 3.2vh; left: 3.4vw;
-    font-size: clamp(10px, 0.85vw, 13px); letter-spacing: 0.55em;
-    color: rgba(150, 230, 245, 0.5); text-transform: uppercase;
-  }
-  #brand b { font-weight: 500; color: rgba(196, 246, 255, 0.85); }
+  /* the state word is the only thing at the top now, centred over the head */
   #status {
-    position: absolute; top: 3.2vh; right: 3.4vw;
+    position: absolute; top: 3.2vh; left: 50%; transform: translateX(-50%);
     font-size: clamp(9px, 0.75vw, 12px); letter-spacing: 0.42em;
     text-transform: uppercase; color: rgba(90, 200, 215, 0.55);
     display: flex; align-items: center; gap: 0.7em;
@@ -215,7 +210,6 @@
   <div id="scan"></div>
 
   <div id="hud">
-    <div id="brand"><b>HERMES</b> · FACE</div>
     <div id="status"><span id="dot"></span><span id="stateLabel">idle</span></div>
 
     <div id="caption"><div id="heard"></div><div id="said"></div></div>

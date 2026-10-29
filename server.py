@@ -14,6 +14,8 @@ import asyncio
 import json
 import os
 import re
+import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -27,9 +29,30 @@ AUDIO.mkdir(exist_ok=True)
 CONFIG = HERE / "config.json"
 SCHEMA = WEB / "schema.json"
 
-HERMES = Path.home() / ".hermes/hermes-agent/.hermes/bin/hermes"
-HERMES_CONFIG = Path.home() / ".hermes/config.yaml"
-VOXTYPE_STATE = Path(f"/run/user/{os.getuid()}/voxtype/state")
+HERMES_HOME = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
+
+
+def _resolve_hermes() -> Path:
+    """Where the agent CLI lives, without assuming this machine's layout.
+
+    HERMES_BIN wins if set; otherwise the known in-repo install, then anything on
+    PATH, so a fresh box is a config change rather than a code change.
+    """
+    env = os.environ.get("HERMES_BIN")
+    if env:
+        return Path(env)
+    for cand in (HERMES_HOME / "hermes-agent/.hermes/bin/hermes",
+                 HERMES_HOME / "bin/hermes"):
+        if cand.is_file() and os.access(cand, os.X_OK):
+            return cand
+    found = shutil.which("hermes")
+    return Path(found) if found else HERMES_HOME / "hermes-agent/.hermes/bin/hermes"
+
+
+HERMES = _resolve_hermes()
+HERMES_CONFIG = HERMES_HOME / "config.yaml"
+VOXTYPE_STATE = Path(os.environ.get("HERMES_FACE_VOXTYPE_STATE")
+                     or f"/run/user/{os.getuid()}/voxtype/state")
 
 PORT = int(os.environ.get("HERMES_FACE_PORT", "9120"))
 
@@ -50,13 +73,58 @@ VOICES = [
 PROMPT_PREFIX = (
     "Voice interface: your answer is spoken aloud by TTS and shown on screen. "
     "Answer in English only, in one to three short sentences of plain speech. "
-    "No markdown, no lists, no code blocks, no emoji. Be direct.\n\n"
+    "No markdown, no lists, no code blocks, no emoji. Be direct. "
+    "Begin the answer with exactly one mood tag in square brackets -- one of "
+    "[warm] [amused] [serious] [curious] [excited] [concerned] [dry] [neutral] -- "
+    "that matches how the answer should sound. The tag is stripped before speaking "
+    "and is never shown, so nothing else belongs in the brackets.\n\n"
 )
 
+MOODS = ("neutral", "warm", "amused", "curious", "excited", "serious", "concerned", "dry")
+MOOD_TAG = re.compile(r"^\s*\[([a-z][a-z \-]{1,19})\]\s*", re.I)
+
+# the tag is the model's own read of the answer; when it forgets, these words are a
+# crude but adequate second opinion, and a slash-command reply always lands here
+MOOD_HINTS = (
+    ("amused", ("haha", "funny", "joke", "ridiculous")),
+    ("concerned", ("sorry", "fail", "failed", "error", "broken", "problem", "can't",
+                   "cannot", "unable", "risk", "careful", "warning")),
+    ("excited", ("great", "excellent", "perfect", "brilliant", "let's go", "works")),
+    ("warm", ("happy", "glad", "thanks", "thank you", "welcome", "nice")),
+)
+
+
+def split_mood(reply: str) -> tuple[str, str]:
+    """Pull the leading mood tag out of a reply. Returns (mood, reply without it)."""
+    m = MOOD_TAG.match(reply or "")
+    if m:
+        word = m.group(1).strip().lower().replace(" ", "")
+        rest = reply[m.end():].lstrip()
+        if word in MOODS and rest:
+            return word, rest
+    return guess_mood(reply), (reply or "").strip()
+
+
+def guess_mood(text: str) -> str:
+    low = (text or "").lower()
+    for mood, words in MOOD_HINTS:
+        if any(w in low for w in words):
+            return mood
+    if "?" in low:
+        return "curious"
+    return "neutral"
+
+
 LOCK = threading.Lock()
+# The live turn's process, so /interrupt can kill the agent and not just the display.
+# Each turn is started in its own session, so TERM to the group takes the CLI and
+# anything it spawned with it.
+RUN = {"proc": None, "seq": 0}
+RUN_LOCK = threading.Lock()
 STATE = {
     "agent": "idle",        # idle | thinking | speaking
     "voxtype": "idle",      # idle | recording | transcribing
+    "mood": "neutral",      # drives the expression while it speaks
     "heard": "",
     "reply": "",
     "audio": None,
@@ -64,6 +132,55 @@ STATE = {
     "seq": 0,
     "error": "",
 }
+
+
+SID_LINE = re.compile(r"^\s*session_id:\s*(\S+)\s*$", re.M)
+RE_SID = re.compile(r"[0-9A-Za-z_\-]{6,64}")
+FACE_SESSION = "hermes-face"
+
+
+def parse_quiet(out: str) -> tuple[str, str]:
+    """Split `hermes chat -Q` output into (reply, session_id)."""
+    text = out or ""
+    m = SID_LINE.search(text)
+    sid = m.group(1) if m else ""
+    body = SID_LINE.sub("", text).strip()
+    return body, sid
+
+
+def _kill_turn(wait: float = 3.0) -> bool:
+    """Signal the live turn's process group and wait until it is actually gone.
+
+    Returning before the PID is reaped is what breaks the *next* turn: Hermes
+    refuses a second run with "session already has a live owner" while the dead
+    run's lock file lingers. So this polls for the exit, then escalates to KILL.
+    """
+    with RUN_LOCK:
+        proc = RUN["proc"]
+    if proc is None or proc.poll() is not None:
+        return False
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        return False
+    deadline = time.time() + wait
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            return True
+        time.sleep(0.05)
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    for _ in range(40):
+        if proc.poll() is not None:
+            break
+        time.sleep(0.05)
+    try:
+        proc.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        pass
+    return True
 
 
 # --------------------------------------------------------------------- face spec
@@ -115,9 +232,17 @@ def hermes_voice() -> str:
 
 # --------------------------------------------------------------------- config
 def load_config() -> dict:
+    """The whole document, not just the two keys this module reads.
+
+    Saved presets live under "presets", and every /params save rewrites the file
+    from whatever this returned: rebuilding the dict here dropped them, so moving
+    a slider after saving a preset silently deleted the preset.
+    """
     try:
         cfg = json.loads(CONFIG.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
+        cfg = {}
+    if not isinstance(cfg, dict):
         cfg = {}
     params = cfg.get("params")
     if not isinstance(params, dict):
@@ -126,8 +251,9 @@ def load_config() -> dict:
     for key, (default, _lo, _hi, _choices) in PARAM_SPEC.items():
         v = coerce(key, params.get(key, default))
         merged[key] = default if v is None else v
-    voice = cfg.get("voice") if cfg.get("voice") in {v for v, _ in VOICES} else hermes_voice()
-    return {"params": merged, "voice": voice}
+    cfg["params"] = merged
+    cfg["voice"] = cfg["voice"] if cfg.get("voice") in {v for v, _ in VOICES} else hermes_voice()
+    return cfg
 
 
 def custom_presets(cfg: dict) -> dict:
@@ -217,10 +343,25 @@ def clean_for_speech(text: str) -> str:
 
 
 def synth(text: str, out: Path, voice: str | None = None) -> None:
-    import edge_tts
+    """Speak, with the module or the CLI -- a systemd unit's PATH often has neither.
+
+    The venv install gives the module. On a box where edge-tts came from uv/pipx the
+    module is not importable by the service's interpreter, and the CLI is the only
+    thing that exists; without this fallback every reply is silent with a
+    ModuleNotFoundError in the journal.
+    """
+    said = voice or load_config()["voice"]
+    try:
+        import edge_tts
+    except ImportError:
+        cli = shutil.which("edge-tts") or str(Path.home() / ".local/bin/edge-tts")
+        subprocess.run([cli, "--voice", said, "--rate=+4%", "--text", text,
+                        "--write-media", str(out)],
+                       check=True, capture_output=True, timeout=120)
+        return
 
     async def run() -> None:
-        await edge_tts.Communicate(text, voice or load_config()["voice"], rate="+4%").save(str(out))
+        await edge_tts.Communicate(text, said, rate="+4%").save(str(out))
 
     asyncio.run(run())
 
@@ -337,39 +478,78 @@ def run_turn(text: str, seq: int) -> None:
     else:
         qfile = AUDIO / f"q-{int(time.time() * 1000)}.txt"
         qfile.write_text(PROMPT_PREFIX + heard, encoding="utf-8")
-        cmd = [str(HERMES), "chat", "--query-file", str(qfile), "--format", "stream-json",
-               "--pass-session-id"]
-        if sid:
+        # -Q is the programmatic mode the current CLI actually has: it prints the
+        # final response plus a `session_id: ...` line, and nothing else. The old
+        # invocation asked for `--format stream-json`, which this Hermes no longer
+        # accepts, so every turn failed with "unrecognized arguments".
+        cmd = [str(HERMES), "chat", "--query-file", str(qfile), "-Q", "--source", "tool"]
+        if RE_SID.fullmatch(sid or "") and sid != FACE_SESSION:
             cmd += ["--resume", sid]
+        else:
+            # A named session is the durable half of the trick: a fresh conversation
+            # per turn would forget the last thing that was said to the face.
+            cmd += ["--continue", FACE_SESSION, "--create-if-missing"]
 
-        reply, new_sid = "", sid
-        try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=240,
-                                  stdin=subprocess.DEVNULL)
-            for raw in proc.stdout.splitlines():
-                raw = raw.strip()
-                if not raw.startswith("{"):
-                    continue
-                try:
-                    ev = json.loads(raw)
-                except json.JSONDecodeError:
-                    continue
-                if ev.get("type") == "result":
-                    reply = (ev.get("text") or "").strip()
-                    new_sid = ev.get("session_id") or new_sid
-            if not reply:
-                stderr = (proc.stderr or "").strip().splitlines()
-                reply = "The agent did not return an answer." + (f" ({stderr[-1][:160]})" if stderr else "")
-        except subprocess.TimeoutExpired:
-            reply = "That took too long, so I stopped."
-        except Exception as exc:                   # noqa: BLE001
-            reply = f"I hit an error: {exc}"
-        finally:
-            qfile.unlink(missing_ok=True)
+        reply, new_sid, interrupted = "", sid, False
+        # The previous killed run can still hold the session lock for a moment, so a
+        # turn that fails on "live owner" is retried rather than reported as an error.
+        for attempt in range(4):
+            try:
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                        text=True, stdin=subprocess.DEVNULL,
+                                        start_new_session=True)
+            except Exception as exc:               # noqa: BLE001
+                reply = f"I hit an error: {exc}"
+                break
+            with RUN_LOCK:
+                RUN["proc"] = proc
+                RUN["seq"] = seq
+            try:
+                out, err = proc.communicate(timeout=240)
+            except subprocess.TimeoutExpired:
+                _kill_turn()
+                out, err = "", ""
+                reply = "That took too long, so I stopped."
+            finally:
+                with RUN_LOCK:
+                    if RUN["proc"] is proc:
+                        RUN["proc"] = None
+                qfile.unlink(missing_ok=True)
 
+            # interrupted: the seq moved on, so this turn's answer is not wanted
+            with LOCK:
+                abandoned = STATE["seq"] != seq
+            if abandoned:
+                interrupted = True
+                break
+
+            # `hermes chat -Q` prints the reply on stdout and `session_id: ...` on
+            # stderr, so both streams have to be read to keep the thread.
+            reply, got_sid = parse_quiet(out)
+            if not got_sid:
+                _, got_sid = parse_quiet(err)
+            new_sid = got_sid or new_sid or sid or FACE_SESSION
+
+            if reply or proc.returncode == 0:
+                break
+            tail = (err or "").strip().splitlines()
+            last = tail[-1][:200] if tail else ""
+            if "live owner" in last and attempt < 3:
+                time.sleep(0.6 * (attempt + 1))     # the dead run's lock is clearing
+                continue
+            reply = "The agent did not return an answer." + (f" ({last[:160]})" if last else "")
+            break
+
+        if interrupted:
+            reply = "[INTERRUPTED]"
+
+    if reply == "[INTERRUPTED]":
+        set_if_current(seq, agent="idle", audio=None)
+        return
+    mood, reply = split_mood(reply)
     record_turn(heard, reply, new_sid or "")
     speech = clean_for_speech(reply)[:1200]
-    if not set_if_current(seq, agent="speaking", reply=reply, session=new_sid or ""):
+    if not set_if_current(seq, agent="speaking", reply=reply, mood=mood, session=new_sid or ""):
         return                                     # this turn was abandoned
     if not speech:
         set_if_current(seq, agent="idle")
@@ -471,12 +651,13 @@ class Handler(BaseHTTPRequestHandler):
             text = str(payload.get("text") or "")
             if not text.strip():
                 return self._json({"error": "empty"}, 400)
+            # The new command always wins: drop whatever is running instead of
+            # refusing the turn. The killed run notices its seq moved and stays quiet.
+            _kill_turn()
             with LOCK:
-                if STATE["agent"] != "idle":
-                    return self._json({"error": "busy"}, 409)
                 STATE["seq"] += 1
                 seq = STATE["seq"]
-                STATE.update(agent="thinking", heard=text.strip(),
+                STATE.update(agent="thinking", mood="curious", heard=text.strip(),
                              reply="", error="", audio=None)
             threading.Thread(target=run_turn, args=(text, seq), daemon=True).start()
             return self._json({"ok": True, "seq": seq})
@@ -546,7 +727,15 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:               # noqa: BLE001
                 return self._json({"ok": False, "error": str(exc)}, 500)
 
-        if path in ("/spoken", "/interrupt"):
+        if path == "/interrupt":
+            killed = _kill_turn()
+            with LOCK:
+                # clear the caption too: the killed turn cannot report its own end,
+                # and a half-finished reply left on screen reads as the new answer
+                STATE.update(agent="idle", audio=None, reply="", seq=STATE["seq"] + 1)
+            return self._json({"ok": True, "killed": killed})
+
+        if path == "/spoken":
             with LOCK:
                 want = payload.get("seq")
                 if want is not None and int(want) != STATE["seq"]:

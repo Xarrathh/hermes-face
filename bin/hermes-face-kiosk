@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# Hermes face — kiosk launcher.
+#
+# Starts the bridge if systemd has it, waits for it to answer, then opens the
+# face page in a locked-down browser window. Two modes:
+#
+#   hermes-face-kiosk            true kiosk: fullscreen, no address bar, no tabs,
+#                                no context menu, no scrollbars (appliance/signage)
+#   hermes-face-kiosk --app      app window: same lockdown minus --kiosk, so the
+#                                window manager can float/tile it (desktop use)
+#
+# Environment:
+#   HERMES_FACE_PORT       bridge port (default 9120)
+#   HERMES_FACE_BROWSER    browser binary to use (default: first one found)
+#   HERMES_FACE_PROFILE    profile dir (default $XDG_DATA_HOME/hermes-face-kiosk)
+#   HERMES_FACE_UNIT       bridge unit to start (default hermes-face.service)
+set -u
+
+PORT="${HERMES_FACE_PORT:-9120}"
+UNIT="${HERMES_FACE_UNIT:-hermes-face.service}"
+URL="http://127.0.0.1:${PORT}/face/"
+PROFILE="${HERMES_FACE_PROFILE:-${XDG_DATA_HOME:-$HOME/.local/share}/hermes-face-kiosk}"
+
+# One face at a time. This launcher can be reached from the Hyprland autostart line
+# and from the kiosk unit; a second copy would open a second fullscreen window over
+# the first, and Chromium with the same profile would hand the URL to the running
+# instance instead of starting cleanly.
+if pgrep -f -- "--user-data-dir=$PROFILE" >/dev/null 2>&1; then
+  exit 0
+fi
+
+MODE="--kiosk"
+for arg in "$@"; do
+  case "$arg" in
+    --app) MODE="--app" ;;
+    -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "hermes-face-kiosk: unknown argument $arg" >&2; exit 2 ;;
+  esac
+done
+
+up() { curl -sf -m 1 -o /dev/null "$URL" 2>/dev/null; }
+
+if ! up; then
+  command -v systemctl >/dev/null 2>&1 \
+    && systemctl --user start "$UNIT" >/dev/null 2>&1 || true
+  for _ in $(seq 1 120); do
+    up && break
+    sleep 0.25
+  done
+fi
+
+if ! up; then
+  msg="Hermes face: no bridge answering on $URL"
+  command -v notify-send >/dev/null 2>&1 && notify-send -u critical "Hermes face" "$msg"
+  echo "$msg" >&2
+  exit 1
+fi
+
+if [ -n "${HERMES_FACE_BROWSER:-}" ]; then
+  BROWSER="$HERMES_FACE_BROWSER"
+else
+  BROWSER=""
+  for cand in chromium chromium-browser google-chrome-stable google-chrome brave-browser microsoft-edge; do
+    if command -v "$cand" >/dev/null 2>&1; then BROWSER="$(command -v "$cand")"; break; fi
+  done
+fi
+if [ -z "$BROWSER" ]; then
+  echo "hermes-face-kiosk: no Chromium-family browser found; set HERMES_FACE_BROWSER" >&2
+  exit 1
+fi
+
+if [ -z "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ] && [ -z "${HERMES_FACE_HEADLESS:-}" ]; then
+  echo "hermes-face-kiosk: no display detected (WAYLAND_DISPLAY/DISPLAY both empty)" >&2
+  echo "  on a headless appliance run it under a compositor, e.g.: cage -s -- hermes-face-kiosk" >&2
+  exit 1
+fi
+
+# Notes on the flags:
+#  * one dedicated profile per purpose, or --app reopens the last page instead of
+#    this URL (Chromium keys the window class off the URL).
+#  * Chromium inherits ~/.config/chromium-flags.conf on some distros, which brings
+#    extensions and Google sync a face does not need; they are turned off here.
+#  * --kiosk takes the URL as a following argument, --app= takes it inline.
+FLAGS=(
+  --user-data-dir="$PROFILE"
+  --no-first-run --no-default-browser-check --noerrdialogs
+  --disable-extensions --disable-sync --disable-background-networking
+  --disable-component-update --disable-domain-reliability
+  --disable-session-crashed-bubble --hide-scrollbars
+  --disable-features=Translate,MediaRouter,OptimizationHints
+  --autoplay-policy=no-user-gesture-required
+  --ozone-platform-hint=auto
+  --check-for-update-interval=31536000
+  --password-store=basic
+)
+
+if [ "$MODE" = "--app" ]; then
+  exec "$BROWSER" "--app=$URL" "${FLAGS[@]}"
+fi
+exec "$BROWSER" --kiosk "$URL" "${FLAGS[@]}"

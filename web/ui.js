@@ -364,7 +364,7 @@
   $('#panelClose').addEventListener('click', () => togglePanel(false));
 
   /* ------------------------------------------------------------ audio */
-  let ac = null, analyser = null, audioEl = null, sourceNode = null, rafAmp = 0;
+  let ac = null, analyser = null, audioEl = null, sourceNode = null, rafAmp = 0, freqBuf = null;
   let lastSeq = null;   /* the turn this page is currently showing */
 
   function ensureAudioGraph() {
@@ -398,6 +398,24 @@
     for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
     const rms = Math.sqrt(sum / buf.length);
     api().setAmp(Math.min(1, rms * 3.4));
+
+    // spectral centre of mass, normalised: speech lands low, a bright or emphatic voice
+    // lands higher. It is a cheap stand-in for pitch and it moves with emphasis, which is
+    // all the expression layer needs.
+    if (!freqBuf || freqBuf.length !== analyser.frequencyBinCount) {
+      freqBuf = new Uint8Array(analyser.frequencyBinCount);
+    }
+    analyser.getByteFrequencyData(freqBuf);
+    let wsum = 0, msum = 0;
+    for (let i = 1; i < freqBuf.length; i++) {
+      const m = freqBuf[i];
+      if (m < 8) continue;
+      wsum += i * m; msum += m;
+    }
+    const centroid = msum > 0 ? (wsum / msum) / freqBuf.length : 0;   // 0..1 of Nyquist
+    // speech measured off a real reply lands between 0.11 and 0.23, so the band is centred
+    // there: outside it the value would sit pinned at one end and stop meaning anything
+    api().setProsody(Math.min(1, rms * 3.4), Math.max(0, Math.min(1, (centroid - 0.08) / 0.20)));
     rafAmp = requestAnimationFrame(pumpAmp);
   }
 
@@ -416,15 +434,31 @@
     addEventListener(ev, () => { if (ac && ac.state === 'suspended') ac.resume().catch(() => {}); }, { passive: true }));
 
   /* ------------------------------------------------------------ turn */
+  // The new command always wins: if a turn is running it is interrupted first and the
+  // reply that was mid-sentence is dropped, rather than the input being refused.
+  async function interruptTurn() {
+    if (audioEl) { try { audioEl.pause(); audioEl.currentTime = 0; } catch { /* not loaded */ } }
+    lastAudio = '';
+    try {
+      await fetch('/interrupt', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      });
+    } catch { /* the next /say will fail loudly if the bridge is really down */ }
+  }
+
   async function submit() {
     const text = line.value.trim();
-    if (!text || busy) return;
+    if (!text) return;
+    const wasBusy = busy;
     busy = true;
     submitted = text;
     line.value = '';
     said.textContent = '';
     heardEl.textContent = 'you: ' + text;
     try {
+      if (wasBusy) await interruptTurn();
       const r = await fetch('/say', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -438,11 +472,24 @@
 
   line.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); submit(); }
-    if (e.key === 'Escape') { line.blur(); togglePanel(false); }
+    if (e.key === 'Escape') {
+      // Escape is the "stop talking and listen" key while a turn is live
+      if (busy) { e.preventDefault(); interruptTurn(); heardEl.textContent = 'interrupted'; return; }
+      line.blur();
+      togglePanel(false);
+    }
   });
 
+  // Shortcuts below are bare keys, so anything typed into a field must be left alone: the
+  // profile-name input made every "e" in a name close the panel.
+  const isField = (el) => !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
+
   addEventListener('keydown', (e) => {
-    if (e.target === line) return;
+    if (e.target === line || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (isField(e.target)) {
+      if (e.key === 'Escape') e.target.blur();
+      return;
+    }
     if (e.key === 'e' || e.key === 'E') { e.preventDefault(); togglePanel(); }
     if (e.key === 'h' || e.key === 'H') { e.preventDefault(); toggleHistory(); }
     if (e.key === 'Escape') togglePanel(false);
@@ -479,6 +526,7 @@
 
       busy = st.agent !== 'idle';
       api().setState(state);
+      api().setMood(st.mood || 'neutral');
       document.body.dataset.state = state;
       stateLabel.textContent = LABEL[state] || state;
 

@@ -32,7 +32,8 @@
   const approach = (cur, target, rate, dt) => cur + (target - cur) * (1 - Math.exp(-rate * dt));
 
   /* ---------------------------------------------------------------- palette */
-  let P = {};                       // parameters (schema defaults, then /params)
+  let P = {};                       // the params the renderer reads: BASE plus the mood offsets
+  let BASE = {};                    // the tuned look, as the sliders and the file have it
   const COL = { main: [80, 220, 240], core: [235, 255, 255], dim: [30, 110, 130], deep: [6, 30, 38] };
 
   function hsl2rgb(h, s, l) {
@@ -95,12 +96,15 @@
     cv.style.height = VH + 'px';
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     G.vignette = null;
+    G.scanPat = null;
     layout();
     rebuildGeometry();
     buildMotes();
     buildCircuit();
     buildMatrix();
     buildBgEffect();
+    buildThreads(true);
+    buildRain();
   }
 
   /* ---------------------------------------------------------------- anatomy */
@@ -181,7 +185,59 @@
   }
   const halfWidth = (v) => G.hw[clamp(Math.round(v * (G.hw.length - 1)), 0, G.hw.length - 1)];
 
-  /* ---------------------------------------------------------------- state */
+  /* ---------------------------------------------------------------- mood */
+  // The whole face is one parameter set, so an emotion is a set of small offsets on top of
+  // the tuned look, never a replacement for it. The server tags each reply; the blend eases
+  // in while the voice speaks and out again afterwards. Offsets are in the params' own units
+  // and clamped to the schema range, so no mood can push the face somewhere the sliders can't.
+  // Note on headroom: the tuned look sits at smile 0.38 and eyeOpen at the schema max of
+  // 1.70, so upward moves on those two keys are mostly clamped away. The moods therefore do
+  // their loud work downward (the mouth can drop to -0.50) and widen through browHeight,
+  // browArch and pupilSize instead, which are nowhere near their limits. Amplitudes here are
+  // the whole offset, not a hint: ~2x the first pass, which read as a permanent smile.
+  const MOODS = {
+    neutral:   {},
+    warm:      { smile: 0.20, lipFullness: 0.25, mouthWidth: 0.015, eyeOpen: -0.06,
+                 browSlant: -0.08, browArch: -0.05 },
+    amused:    { smile: 0.21, lipFullness: 0.35, eyeOpen: -0.45, browArch: 0.30,
+                 browHeight: 0.012, earTilt: 0.05 },
+    excited:   { smile: 0.18, lipFullness: 0.20, mouthWidth: 0.025, pupilSize: 0.18,
+                 browHeight: 0.045, browArch: 0.35, earTilt: 0.10 },
+    curious:   { smile: -0.10, browHeight: 0.045, browSlant: 0.12, browArch: 0.15,
+                 eyeTilt: 0.10, pupilSize: 0.08, mouthWidth: -0.015 },
+    serious:   { smile: -0.45, browSlant: -0.22, browThickness: 0.35, browArch: -0.35,
+                 browHeight: -0.015, eyeOpen: -0.20, mouthWidth: -0.02 },
+    concerned: { smile: -0.50, browSlant: 0.30, browHeight: 0.022, browArch: 0.20,
+                 eyeTilt: 0.08, lipFullness: -0.15, mouthWidth: -0.03 },
+    dry:       { smile: -0.16, eyeOpen: -0.30, browSlant: -0.16, browArch: -0.10,
+                 earTilt: -0.05 },
+  };
+  const MOOD = { name: 'neutral', target: 0, blend: 0 };
+  const RANGE = {};                 // key -> [min, max], filled from the schema at boot
+
+  function moodParams() {
+    const out = Object.assign({}, BASE);
+    const k = MOOD.blend;
+    if (k < 0.002) return out;
+    const bump = (key, d) => {
+      if (!(key in out) || !d) return;
+      const r = RANGE[key];
+      const v = out[key] + d;
+      out[key] = r ? clamp(v, r[0], r[1]) : v;
+    };
+    const off = MOODS[MOOD.name];
+    if (off) for (const key in off) bump(key, off[key] * k);
+    // the live layer under the mood: loudness opens the pupils a touch, a brighter voice
+    // lifts the brows and the corners. Tiny on purpose -- this is a breath, not a puppet.
+    // eyeOpen is already pinned at the schema max in the tuned look, so loudness moves the
+    // pupil instead of the lid, or it would be silently clamped to nothing.
+    bump('pupilSize', 0.06 * S.pEnergy * k);
+    bump('browHeight', 0.009 * S.pBright * k);
+    bump('smile', 0.04 * S.pBright * k);
+    return out;
+  }
+
+  /* ---------------------------------------------------------------- senses */
   const S = {
     state: 'idle',
     t: 0,
@@ -191,6 +247,7 @@
     nostril: 0, nextNostril: 3, earL: 0, earR: 0,
     aperture: 0,
     amp: 0,
+    energy: 0, bright: 0, pEnergy: 0, pBright: 0,   // live prosody from the speaking voice
     breath: 0,
     listen: 0, think: 0,
     flick: 1, nextFlick: 3,
@@ -202,6 +259,10 @@
   function updateSenses(dt, t) {
     // breathing: a slow lift of the whole head
     S.breath = Math.sin(t * 0.9) * 2.2 * (P.breath ?? 0.6);
+
+    // the voice's own energy and brightness, eased so a syllable does not snap the face
+    S.pEnergy = approach(S.pEnergy, S.energy, 9, dt);
+    S.pBright = approach(S.pBright, S.bright, 5, dt);
 
     // blinking: a randomised schedule, not a metronome. Mean interval follows
     // blinkRate, each gap is re-drawn, and about one blink in six comes back for
@@ -787,14 +848,13 @@
     const hair = P.hair ?? 0.85;
     const hv = P.hairline ?? 0.245;
     const hwH = halfWidth(hv) * 1.005;
-    // Hairline shape and darkness are independent of the hair itself, so a bald head can
-    // still carry a hairline (a shaved edge) and any style's edge can be pushed darker
-    // without adding mass.
+    // Hairline shape and darkness are independent of the hair itself: any style's edge can be
+    // pushed darker without adding mass. Bald is the exception -- it means no hair and no
+    // hairline, so style 0 draws nothing here.
     const edge = clamp(Math.round(P.hairEdge ?? 2), 0, 7);
     const dark = clamp(P.hairDark ?? 1, 0, 2);
-    const bald = style === 0;
-    if (bald && (edge === 0 || dark < 0.02)) return;
-    if (!bald && hair < 0.02) return;
+    const fade = edge === 0;          // "None": no hairline edge anywhere, only hair fading out
+    if (style === 0 || hair < 0.02 || dark < 0.02) return;
     const partN = clamp(P.hairPart ?? 0.62, 0, 1);
     const partU = lerp(-0.30, 0.30, partN);
     const sweptLeft = partU >= 0;
@@ -819,75 +879,82 @@
       return hv - 0.008 + 0.026 * Math.pow(k, 1.2) - 0.030 * Math.exp(-Math.pow(uu / (hwH * 0.20), 2));
     };
 
-    // ---- the cap and the fringe mass: only when there is hair on the head
-    if (!bald) {
-      const cap = new Path2D();
-      cap.moveTo(ux(-hwH), vy(edgeY(-hwH)));
-      for (let i = 0; i <= 40; i++) {
-        const uu = lerp(-hwH, hwH, i / 40);
-        cap.lineTo(ux(uu), vy(edgeY(uu)));
-      }
-      cap.lineTo(ux(hwH), vy(-0.06));
-      cap.lineTo(ux(-hwH), vy(-0.06));
-      cap.closePath();
-
-      ctx.save();
-      ctx.clip(cap);
-      const g = ctx.createLinearGradient(0, vy(-0.02), 0, vy(hv + 0.04));
-      const massDark = clamp(1 + 0.5 * (dark - 1), 0.6, 1.5);   // 2.0 must not blacken the crown
-      g.addColorStop(0, `rgba(6,26,34,${0.52 * density * massDark * 0.7 + 0.18 * density})`);
-      g.addColorStop(0.55, `rgba(5,21,28,${0.40 * density})`);
-      g.addColorStop(1, `rgba(4,16,20,${0.12 * density})`);
-      ctx.fillStyle = g;
-      ctx.fillRect(ux(-1.1), vy(-0.1), dU(2.2), dV(hv + 0.16));
-      ctx.restore();
-
-      // shadow cast on the forehead
-      const sh = ctx.createLinearGradient(0, vy(hv - 0.012), 0, vy(hv + 0.060));
-      sh.addColorStop(0, `rgba(0,4,7,${0.18 * density})`);
-      sh.addColorStop(0.55, `rgba(0,4,7,${0.08 * density})`);
-      sh.addColorStop(1, 'rgba(0,4,7,0)');
-      ctx.save();
-      ctx.translate(0, dV(0.060));
-      ctx.clip(cap);
-      ctx.fillStyle = sh;
-      ctx.fillRect(ux(-1.1), vy(hv - 0.02), dU(2.2), dV(0.10));
-      ctx.restore();
-
-      // fringe: a lobed shadow mass above the hairline, swept side falling lower
-      ctx.save();
-      ctx.clip(cap);
-      const fr = new Path2D();
-      const lobes = style === 1 ? 1 : 2;
-      const frTop = -0.02;
-      const dipAt = (uu, q) => {
-        const lw = Math.sin(q * Math.PI * lobes);
-        const towardPart = sweptLeft ? clamp((uu / Math.max(1e-6, partU)) - 0.55, 0, 1)
-                                     : clamp((1 - uu / Math.max(1e-6, partU)) * 0.5, 0, 1);
-        return 0.010 + 0.040 * Math.abs(lw)
-             + 0.014 * (1 - Math.abs(uu) / Math.max(1e-6, hwH))
-             + 0.030 * towardPart;
-      };
-      fr.moveTo(ux(-hwH), vy(frTop));
-      for (let i = 0; i <= 48; i++) {
-        const q = i / 48;
-        const uu = lerp(-hwH, hwH, q);
-        fr.lineTo(ux(uu), vy(edgeY(uu) + dipAt(uu, q)));
-      }
-      fr.lineTo(ux(hwH), vy(frTop));
-      fr.closePath();
-      const fg = ctx.createLinearGradient(0, vy(frTop), 0, vy(hv + 0.05));
-      fg.addColorStop(0, `rgba(6,26,34,${0.60 * density * massDark * 0.8})`);
-      fg.addColorStop(0.7, `rgba(5,20,27,${0.44 * density})`);
-      fg.addColorStop(1, `rgba(4,15,20,${0.10 * density})`);
-      ctx.fillStyle = fg;
-      ctx.fill(fr);
-      ctx.restore();
+    // ---- the cap and the fringe mass (a bald head returned above, so there is always hair)
+    const cap = new Path2D();
+    cap.moveTo(ux(-hwH), vy(edgeY(-hwH)));
+    for (let i = 0; i <= 40; i++) {
+      const uu = lerp(-hwH, hwH, i / 40);
+      cap.lineTo(ux(uu), vy(edgeY(uu)));
     }
+    cap.lineTo(ux(hwH), vy(-0.06));
+    cap.lineTo(ux(-hwH), vy(-0.06));
+    cap.closePath();
+
+    ctx.save();
+    ctx.clip(cap);
+    const g = ctx.createLinearGradient(0, vy(-0.02), 0, vy(hv + 0.04));
+    const massDark = clamp(1 + 0.5 * (dark - 1), 0.6, 1.5);   // 2.0 must not blacken the crown
+    g.addColorStop(0, `rgba(6,26,34,${0.52 * density * massDark * 0.7 + 0.18 * density})`);
+    g.addColorStop(0.55, `rgba(5,21,28,${0.40 * density})`);
+    // None means no hairline at all, so the mass has to dissolve into the scalp before the
+    // clip curve: any alpha left at the curve draws the very edge the user switched off.
+    if (fade) {
+      g.addColorStop(0.85, 'rgba(4,16,20,0)');
+      g.addColorStop(1, 'rgba(4,16,20,0)');
+    } else {
+      g.addColorStop(1, `rgba(4,16,20,${0.12 * density})`);
+    }
+    ctx.fillStyle = g;
+    ctx.fillRect(ux(-1.1), vy(-0.1), dU(2.2), dV(hv + 0.16));
+    ctx.restore();
+
+    // shadow cast on the forehead
+    const sh = ctx.createLinearGradient(0, vy(hv - 0.012), 0, vy(hv + 0.060));
+    sh.addColorStop(0, `rgba(0,4,7,${0.18 * density})`);
+    sh.addColorStop(0.55, `rgba(0,4,7,${0.08 * density})`);
+    sh.addColorStop(1, 'rgba(0,4,7,0)');
+    ctx.save();
+    ctx.translate(0, dV(0.060));
+    ctx.clip(cap);
+    ctx.fillStyle = sh;
+    ctx.fillRect(ux(-1.1), vy(hv - 0.02), dU(2.2), dV(0.10));
+    ctx.restore();
+
+    // fringe: a lobed shadow mass above the hairline, swept side falling lower
+    ctx.save();
+    ctx.clip(cap);
+    const fr = new Path2D();
+    const lobes = style === 1 ? 1 : 2;
+    const frTop = -0.02;
+    const dipAt = (uu, q) => {
+      const lw = Math.sin(q * Math.PI * lobes);
+      const towardPart = sweptLeft ? clamp((uu / Math.max(1e-6, partU)) - 0.55, 0, 1)
+                                   : clamp((1 - uu / Math.max(1e-6, partU)) * 0.5, 0, 1);
+      return 0.010 + 0.040 * Math.abs(lw)
+           + 0.014 * (1 - Math.abs(uu) / Math.max(1e-6, hwH))
+           + 0.030 * towardPart;
+    };
+    fr.moveTo(ux(-hwH), vy(frTop));
+    for (let i = 0; i <= 48; i++) {
+      const q = i / 48;
+      const uu = lerp(-hwH, hwH, q);
+      fr.lineTo(ux(uu), vy(edgeY(uu) + dipAt(uu, q)));
+    }
+    fr.lineTo(ux(hwH), vy(frTop));
+    fr.closePath();
+    const fg = ctx.createLinearGradient(0, vy(frTop), 0, vy(hv + 0.05));
+    fg.addColorStop(0, `rgba(6,26,34,${0.60 * density * massDark * 0.8})`);
+    fg.addColorStop(0.7, `rgba(5,20,27,${0.44 * density})`);
+    if (fade) { fg.addColorStop(0.86, 'rgba(4,15,20,0)'); fg.addColorStop(1, 'rgba(4,15,20,0)'); }
+    else fg.addColorStop(1, `rgba(4,15,20,${0.10 * density})`);
+    ctx.fillStyle = fg;
+    ctx.fill(fr);
+    ctx.restore();
 
     // ---- the hairline band itself: a soft dark edge along the curve, on any head.
     // A fill with a gradient, never a stroke: this is the "hairline without hair".
-    if (dark > 0.02 && (edge !== 0 || !bald)) {
+    // None draws no band at all -- that is what "no hairline" has to mean.
+    if (dark > 0.02 && !fade) {
       const thick = (uu) => dV(0.030 + 0.014 * (1 - Math.abs(uu) / Math.max(1e-6, hwH)));
       const band = new Path2D();
       band.moveTo(ux(-hwH), vy(edgeY(-hwH)));
@@ -906,10 +973,7 @@
       // darkest stop below the hairline and every shape dissolved into the same smudge
       const top = vy(hv - 0.05), bot = vy(hv + 0.002);
       const bg2 = ctx.createLinearGradient(0, top, 0, bot);
-      // with None there is no shaped hairline, only a soft dissolve under the cap, so it
-      // gets a fraction of the darkness instead of a hard seam
-      const soft = edge === 0 ? 0.45 : 1;
-      const a = (bald ? 0.55 : 0.42) * dark * soft * (bald ? 1 : Math.min(1, hair + 0.35));
+      const a = 0.42 * dark * Math.min(1, hair + 0.35);
       bg2.addColorStop(0, 'rgba(2,9,13,0)');
       bg2.addColorStop(0.55, `rgba(2,9,13,${Math.min(1, a * 0.30)})`);
       bg2.addColorStop(0.85, `rgba(2,9,13,${Math.min(1, a * 0.75)})`);
@@ -936,7 +1000,9 @@
       ctx.save();
       // a small, slow rise and fall -- no snap, no twitch
       ctx.translate(x + side * dU(0.006) * tw, cyE - dV(0.020) * tw);
-      ctx.rotate(-((P.earTilt ?? 0.1) + 0.05 * tw * side));
+      // Tilt is mirrored with the shape: the scale(field) below already flips this ear, so the
+      // rotation carries the same side factor or both ears lean the same way on screen.
+      ctx.rotate(-((P.earTilt ?? 0.1) + 0.05 * tw) * side);
       ctx.scale(side, 1);
 
       // shell
@@ -1045,6 +1111,167 @@
     ctx.restore();
   }
 
+  /* ------------------------------------------------------------- matrix pass */
+  // Carried over from the first Rynette face, and the reason it read as a
+  // hologram instead of smooth glass: the head is a grid of cells and each cell
+  // is a fine vertical thread. Three sub-columns per cell with fixed gains
+  // [0.52, 1.00, 0.68] produce the striation -- one flat column per cell reads
+  // as a barcode instead. Per-column and per-row gains are what stop it looking
+  // like a blurred photo on a mesh.
+  //
+  // The texture does not move with time, so it is built once per resize/pitch
+  // and blitted twice a frame: multiply to cut the gaps between threads,
+  // lighter at low alpha for the thread glow. Drawing it cell by cell per frame
+  // (84 x 112 fillRects at 40 fps) is measurable; this is not.
+  const THREAD = { cv: null, ready: false, key: '' };
+  const SUB_GAIN = [0.52, 1.00, 0.68];
+
+  function buildThreads(force) {
+    const cols = clamp(Math.round(P.matPitch ?? 84), 20, 200);
+    const cell = Math.max(3, Math.round(dU(2.04) / cols));
+    const rowH = Math.max(3, Math.round(cell * 1.35));
+    const x0 = Math.round(ux(-1.02));
+    const y0 = Math.round(vy(-0.06));
+    const w = Math.max(8, Math.round(dU(2.04)));
+    const h = Math.max(8, Math.round(dV(1.20)));
+    const key = `${cols}|${cell}|${rowH}|${x0}|${y0}|${w}|${h}`;
+    if (!force && THREAD.ready && THREAD.key === key) return;
+    THREAD.key = key;
+
+    const cv = THREAD.cv || document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const c = cv.getContext('2d', { willReadFrequently: true });
+    const img = c.createImageData(w, h);
+    const data = img.data;
+    const gain = clamp(P.matGain ?? 0.7, 0, 1);
+
+    // Tonal quantisation is the other half of the old face's look: each cell gets one
+    // of a few fixed levels rather than a continuous gain, which is what stops the
+    // grid reading as a blur and makes it read as a quantised portrait. Levels follow
+    // a ramp (near-black -> hot), so a column is a tonal chunk, not a brightness value.
+    const steps = clamp(Math.round(P.matLevels ?? 5), 1, 9);
+    const RAMP = [];
+    for (let i = 0; i < steps; i++) {
+      RAMP.push(steps === 1 ? 1 : 0.52 + 0.48 * (i / (steps - 1)));
+    }
+    const pick = (h01) => RAMP[Math.min(steps - 1, Math.floor(h01 * steps))];
+
+    const colVar = new Float32Array(w);
+    for (let x = 0; x < w; x++) {
+      const ci = Math.floor(x / cell);
+      const sub = x - ci * cell;
+      const k = Math.min(2, Math.floor((sub / cell) * 3));
+      const thread = 0.45 + 0.55 * SUB_GAIN[k];            // 0.736 .. 1.0
+      const base = 1 - gain * (1 - thread) * 0.92;         // gap cut
+      const tone = pick(hash01(ci * 12.9898 + 78.233));
+      colVar[x] = clamp(base * (0.42 + 0.58 * tone), 0.2, 1);
+    }
+    const rows = Math.ceil(h / rowH);
+    const rowVar = new Float32Array(rows);
+    for (let r = 0; r < rows; r++) {
+      rowVar[r] = 1 - 0.13 * gain * (1 - pick(hash01(r * 3.71 + 5.3)));
+    }
+    const rowCut = 1 - 0.16 * gain;                        // the line between two rows
+
+    for (let y = 0; y < h; y++) {
+      const r = Math.floor(y / rowH);
+      const onCut = (y % rowH) === rowH - 1;
+      const rv = rowVar[r] * (onCut ? rowCut : 1);
+      const row = y * w;
+      for (let x = 0; x < w; x++) {
+        const v = (colVar[x] * rv * 255) | 0;
+        const i = (row + x) * 4;
+        data[i] = v; data[i + 1] = v; data[i + 2] = v; data[i + 3] = 255;
+      }
+    }
+    c.putImageData(img, 0, 0);
+    Object.assign(THREAD, { cv, x0, y0, w, h, ready: true });
+  }
+
+  function drawThreads(t) {
+    const amt = clamp(P.matThreads ?? 0, 0, 1);
+    if (amt < 0.01 || OFF.has('threads')) return;
+    buildThreads(false);
+    ctx.save();
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.globalAlpha = amt;
+    ctx.drawImage(THREAD.cv, THREAD.x0, THREAD.y0, THREAD.w, THREAD.h);
+    // A flat additive pass here lifts the whole head by a constant and flattens the
+    // key light into mush: the threads must darken the gaps, not brighten the face.
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.025 * amt * (P.glow ?? 1);
+    ctx.drawImage(THREAD.cv, THREAD.x0, THREAD.y0, THREAD.w, THREAD.h);
+    ctx.restore();
+  }
+
+  /* --------------------------------------------------------------- front rain */
+  // The other half of the old face: glyph rain that falls over the whole frame
+  // but never over the portrait. Here it is drawn in front of the room and
+  // clipped away from the head with an even-odd path, so the rain passes behind
+  // nothing -- it is in the air in front of the face, not on the wall behind it.
+  const RAIN = { cv: null, c: null, w: 0, h: 0, ch: 14, cw: 9, cols: [], last: -1, ready: false };
+
+  function buildRain() {
+    const ch = Math.max(9, (VH * 0.026) / clamp(P.matRainDensity ?? 1, 0.4, 2.4));
+    const cw = ch * 0.62;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const cv = RAIN.cv || document.createElement('canvas');
+    cv.width = Math.max(1, Math.round(VW * dpr));
+    cv.height = Math.max(1, Math.round(VH * dpr));
+    const c = cv.getContext('2d');
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    Object.assign(RAIN, { cv, c, w: VW, h: VH, ch, cw, ready: true, last: -1 });
+    RAIN.cols = [];
+    const nc = Math.max(1, Math.floor(VW / cw));
+    for (let i = 0; i < nc; i++) {
+      RAIN.cols.push({
+        x: i * cw,
+        seed: hash01(i * 3.17 + 1.7),
+        speed: 0.55 + 1.10 * hash01(i * 7.73),
+        len: 6 + Math.round(22 * hash01(i * 5.31 + 9.1)),
+      });
+    }
+  }
+
+  function drawRainFront(t) {
+    const amt = clamp(P.matRain ?? 0, 0, 1);
+    if (amt < 0.01 || OFF.has('rain')) return;
+    if (!RAIN.ready) buildRain();
+    const speed = clamp(P.matRainSpeed ?? 1, 0.1, 3);
+    if (RAIN.last < 0 || t - RAIN.last >= 1 / 12) {
+      RAIN.last = t;
+      const c = RAIN.c;
+      c.clearRect(0, 0, RAIN.w, RAIN.h);
+      c.font = `${Math.round(RAIN.ch * 0.94)}px "JetBrainsMono Nerd Font", "DejaVu Sans Mono", monospace`;
+      c.textBaseline = 'top';
+      const frame = Math.floor(t * 10);          // glyphs step at 10 Hz, columns at 12
+      for (const col of RAIN.cols) {
+        const span = RAIN.h + (col.len + 1) * RAIN.ch;
+        const head = ((col.seed * span) + t * col.speed * RAIN.ch * 9 * speed) % span - col.len * RAIN.ch;
+        for (let k = 0; k <= col.len; k++) {
+          const y = head - k * RAIN.ch;
+          if (y < -RAIN.ch || y > RAIN.h) continue;
+          const gi = Math.floor(hash01(col.x * 0.77 + k * 17.1 + (frame % 37) * 61.9) * BG.CHARS.length);
+          const a = k === 0 ? 1 : Math.pow(1 - k / (col.len + 1), 1.9);
+          c.fillStyle = k === 0 ? rgba(COL.core, 0.95) : rgba(COL.main, 0.72 * a);
+          c.fillText(BG.CHARS[gi], col.x, y);
+        }
+      }
+    }
+    // in front of the room, never in front of the face
+    ctx.save();
+    const clip = new Path2D();
+    clip.rect(0, 0, VW, VH);
+    clip.addPath(headPath());
+    ctx.clip(clip, 'evenodd');
+    ctx.globalAlpha = amt;
+    ctx.drawImage(RAIN.cv, 0, 0, RAIN.w, RAIN.h);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.26 * amt;
+    ctx.drawImage(RAIN.cv, 0, 0, RAIN.w, RAIN.h);
+    ctx.restore();
+  }
+
   function drawShell(t, hp) {
     const cx = ux(0);
     const glow = P.glow ?? 1;
@@ -1140,6 +1367,9 @@
     else if (effect === 1) drawMotes(hp, t);
     else if (effect === 3) drawCircuit(hp, t);
     else if (effect === 4) drawMatrix(hp, t);
+    // the thread grid goes over whichever shell effect is selected: it is the
+    // surface of the head, not another effect competing with it
+    drawThreads(t);
 
     // scan band
     const scan = P.scan ?? 0.55;
@@ -1713,6 +1943,12 @@
     S.t = FREEZE !== null ? FREEZE : S.t + dt;
     const t = S.t;
 
+    // mood: ease in fast when the voice starts, drift out slowly when it stops
+    MOOD.blend = approach(MOOD.blend, MOOD.target,
+                          MOOD.target > MOOD.blend ? 5.0 : 0.9, dt);
+    if (Math.abs(MOOD.blend - MOOD.target) < 0.002) MOOD.blend = MOOD.target;
+    P = moodParams();
+
     updateSenses(dt, t);
 
     drawBackdrop(t);
@@ -1767,15 +2003,45 @@
     ctx.restore();
     ctx.restore();
 
+    // rain in the air in front of the face (skipped over the head by the even-odd clip)
+    drawRainFront(t);
+
     // vignette (cached per resize; scanlines live in CSS, not 360 fillRects a frame)
-    if (!G.vignette) {
-      G.vignette = ctx.createRadialGradient(VW * 0.5, VH * 0.5, Math.min(VW, VH) * 0.35,
-                                             VW * 0.5, VH * 0.5, Math.max(VW, VH) * 0.78);
-      G.vignette.addColorStop(0, 'rgba(0,0,0,0)');
-      G.vignette.addColorStop(1, 'rgba(0,0,0,0.55)');
+    // CRT finish: 3-pixel scanlines from a 1x3 pattern (one fillRect, not one per
+    // line), then the vignette. The CSS #scan layer keeps the finer grain on top.
+    const scanAmt = clamp(P.matScan ?? 0, 0, 1);
+    if (scanAmt > 0.01 && !OFF.has('raster')) {
+      if (!G.scanPat) {
+        const p = document.createElement('canvas');
+        p.width = 1; p.height = 3;
+        const pc = p.getContext('2d');
+        pc.fillStyle = '#000';
+        pc.fillRect(0, 0, 1, 1);
+        G.scanPat = ctx.createPattern(p, 'repeat');
+      }
+      ctx.save();
+      ctx.globalCompositeOperation = 'multiply';
+      ctx.globalAlpha = 0.30 * scanAmt;
+      ctx.fillStyle = G.scanPat;
+      ctx.fillRect(0, 0, VW, VH);
+      ctx.restore();
     }
-    ctx.fillStyle = G.vignette;
-    ctx.fillRect(0, 0, VW, VH);
+
+    const vig = clamp(P.matVignette ?? 0.5, 0, 1);
+    if (vig > 0.01) {
+      if (!G.vignette) {
+        G.vignette = ctx.createRadialGradient(VW * 0.5, VH * 0.5, Math.min(VW, VH) * 0.34,
+                                               VW * 0.5, VH * 0.5, Math.max(VW, VH) * 0.80);
+        G.vignette.addColorStop(0, 'rgba(0,0,0,0)');
+        G.vignette.addColorStop(0.62, 'rgba(0,0,0,0.26)');
+        G.vignette.addColorStop(1, 'rgba(0,0,0,0.88)');
+      }
+      ctx.save();
+      ctx.globalAlpha = vig;
+      ctx.fillStyle = G.vignette;
+      ctx.fillRect(0, 0, VW, VH);
+      ctx.restore();
+    }
 
     // fps
     fpsAcc += dt; fpsN++;
@@ -1787,8 +2053,10 @@
 
   /* ---------------------------------------------------------------- api */
   function setParams(next) {
-    const hueBefore = COL.main.join(), satBefore = COL.core.join();
-    P = Object.assign({}, P, next);
+    // next is the tuned look; P is that look plus whatever mood is on top, rebuilt here and
+    // every frame so a slider and a mood never fight over the same key
+    BASE = Object.assign({}, BASE, next);
+    P = moodParams();
     palette();
     layout();
     rebuildGeometry();
@@ -1796,20 +2064,34 @@
     buildCircuit();
     buildMatrix();
     buildBgEffect();
+    buildThreads(false);
+    buildRain();
   }
 
   window.__face = {
     setParams,
-    getParams: () => Object.assign({}, P),
-    setState(s) { if (s && s !== S.state) { S.state = s; } },
+    getParams: () => Object.assign({}, BASE),
+    setState(s) {
+      if (s && s !== S.state) S.state = s;
+      // thinking carries the server's own "curious" tag, so the pose is live before the voice
+      MOOD.target = (s === 'speaking' || s === 'thinking') ? 1 : 0;
+    },
+    setMood(m) { if (m && MOODS[m] && m !== MOOD.name) { MOOD.name = m; } },
+    get mood() { return { name: MOOD.name, blend: MOOD.blend, target: MOOD.target }; },
     setAmp(a) { S.amp = clamp(Number(a) || 0, 0, 1); },
+    // energy = how loud, bright = where the voice's weight sits in the spectrum
+    setProsody(energy, bright) {
+      S.energy = clamp(Number(energy) || 0, 0, 1);
+      S.bright = clamp(Number(bright) || 0, 0, 1);
+    },
     setGaze(x, y) { S.tgx = clamp(Number(x) || 0, -1, 1); S.tgy = clamp(Number(y) || 0, -1, 1);
                    S.gazeX = S.tgx; S.gazeY = S.tgy; S.nextSaccade = 1e9; },
     get stats() {
       return { fps: S.fps, state: S.state, aperture: S.aperture, head: { ...HEAD },
                blinks: S.blinks, blink: S.blink, browL: S.browL, browR: S.browR,
                nostril: S.nostril, earL: S.earL, earR: S.earR,
-               gazeX: S.gazeX, gazeY: S.gazeY, smile: P.smile };
+               gazeX: S.gazeX, gazeY: S.gazeY, smile: P.smile,
+               energy: S.pEnergy, bright: S.pBright };
     },
   };
 
@@ -1823,7 +2105,15 @@
       const defaults = {};
       for (const g of schema.groups) for (const p of g.params) defaults[p.key] = p.default;
       window.__face.schema = schema;
-      P = defaults;
+      for (const g of schema.groups) {
+        for (const p of g.params) {
+          RANGE[p.key] = p.kind === 'select'
+            ? [0, Math.max(0, (p.options || []).length - 1)]
+            : [p.min, p.max];
+        }
+      }
+      BASE = defaults;
+      P = moodParams();
       return fetch('/params', { cache: 'no-store' });
     })
     .then((r) => (r.ok ? r.json() : {}))
