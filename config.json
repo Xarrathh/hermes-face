@@ -9,6 +9,8 @@
     "chinWidth": 1.02,
     "chinLength": 1.02,
     "forehead": 1.0,
+    "asymmetry": 0.35,
+    "bust": 0.6,
     "eyeY": 0.494,
     "eyeU": 0.41,
     "eyeW": 0.42,

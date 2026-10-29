@@ -117,17 +117,26 @@
   /* ---------------------------------------------------------------- anatomy */
   // Right half of the silhouette, crown -> chin. u is the half width at that v.
   // Params bend this one curve; nothing else stores a face.
+  // Right half of the silhouette, crown -> chin, u = half width at that v. This is the
+  // whole face SHAPE: everything else bends this one curve.
+  //
+  // It is a real cranium profile rather than an egg: the widest point is the zygomatic
+  // arch just under the eyes, not high up on the skull; there is a temple hollow above
+  // it; the jaw runs down to a corner and then turns forward instead of tapering in a
+  // single sweep; and the chin ends as a flat arc.
   const SILHOUETTE = [
-    [0.000, 0.000], [0.225, 0.008], [0.450, 0.028], [0.660, 0.062], [0.820, 0.108],
-    [0.915, 0.170], [0.955, 0.245], [0.968, 0.320], [0.966, 0.395], [0.958, 0.462],
-    [0.944, 0.525], [0.922, 0.585], [0.900, 0.640], [0.884, 0.692], [0.864, 0.744],
-    [0.830, 0.796], [0.775, 0.844], [0.690, 0.888], [0.570, 0.928], [0.425, 0.960],
-    [0.255, 0.985], [0.150, 0.996], [0.108, 1.000],
+    [0.000, 0.000], [0.300, 0.016], [0.520, 0.042], [0.680, 0.076], [0.790, 0.118],
+    [0.860, 0.166], [0.905, 0.216], [0.936, 0.268], [0.954, 0.312], [0.962, 0.352],
+    [0.956, 0.392], [0.946, 0.424], [0.950, 0.452], [0.960, 0.486], [0.962, 0.516],
+    [0.952, 0.552], [0.934, 0.588], [0.912, 0.624], [0.890, 0.658], [0.874, 0.690],
+    [0.868, 0.722], [0.856, 0.752], [0.826, 0.786], [0.782, 0.818], [0.722, 0.848],
+    [0.646, 0.878], [0.556, 0.906], [0.462, 0.932], [0.372, 0.954], [0.290, 0.972],
+    [0.216, 0.986], [0.160, 0.996], [0.132, 1.000],
   ];
   // The chin is a rounded arc, not a point. Ending the curve at u = 0 gave every
   // face a tapered elf chin however narrow the jaw was set; chinWidth then had
   // almost nothing left to widen. CHIN_U is the half width of the chin's bottom arc.
-  const CHIN_U = 0.108;
+  const CHIN_U = 0.132;
 
   const G = { pts: [], hw: new Float32Array(257) };
 
@@ -404,12 +413,22 @@
   }
 
   function headPath() {
+    // No real face is mirrored, and a perfect mirror is the strongest "this is a mask"
+    // cue there is. Nothing here is a feature, so it costs nothing: the two sides differ
+    // by ~2% in width and ~0.6% in height, and the jaw drifts about 1% off centre.
+    const asym = clamp(P.asymmetry ?? 0.35, 0, 1);
+    const aR = 1 + 0.022 * asym, aL = 1 - 0.022 * asym;
+    const vL = 1 + 0.007 * asym;
     const ring = [];
-    for (const [u, v] of G.pts) ring.push([ux(u), vy(v) + jawDrop(v)]);
+    for (const [u, v] of G.pts) {
+      const drift = 0.012 * asym * smoothstep(0.42, 1, v);
+      ring.push([ux(u * aR + drift), vy(v) + jawDrop(v)]);
+    }
     for (let i = G.pts.length - 1; i >= 1; i--) {
       const [u, v] = G.pts[i];
       if (u === 0) continue;                       // a pointed crown must not duplicate
-      ring.push([ux(-u), vy(v) + jawDrop(v)]);
+      const drift = 0.012 * asym * smoothstep(0.42, 1, v);
+      ring.push([ux(-u * aL + drift), vy(v * vL) + jawDrop(v)]);
     }
     const n = ring.length;
     const p = new Path2D();
