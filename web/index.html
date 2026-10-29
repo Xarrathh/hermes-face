@@ -126,6 +126,25 @@
     -webkit-appearance: none; width: 10px; height: 10px; margin-top: -4px; border-radius: 50%;
     background: #9df0ff; box-shadow: 0 0 8px rgba(110, 230, 255, 0.8); cursor: pointer;
   }
+  /* collapsible param groups */
+  #paramGroups details.group { border-top: 1px solid rgba(80, 190, 210, 0.12); }
+  #paramGroups details.group > summary {
+    margin: 14px 0 6px; padding: 4px 0 4px 14px; position: relative;
+    font-size: 10px; letter-spacing: 0.3em; font-weight: 500;
+    color: rgba(120, 220, 238, 0.75); text-transform: uppercase; cursor: pointer;
+    list-style: none; outline: none;
+  }
+  #paramGroups details.group > summary::-webkit-details-marker { display: none; }
+  #paramGroups details.group > summary::before {
+    content: '+'; position: absolute; left: 0; top: 3px;
+    color: rgba(120, 230, 250, 0.55); font-size: 12px; letter-spacing: 0;
+  }
+  #paramGroups details.group[open] > summary::before { content: '\2212'; }
+  #paramGroups details.group > summary:hover { color: #cdf6ff; }
+  .presetCat {
+    width: 100%; margin: 8px 0 2px; font-size: 9px; letter-spacing: 0.26em;
+    text-transform: uppercase; color: rgba(110, 200, 215, 0.5);
+  }
   .presets { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
   .chip { display: inline-flex; align-items: stretch; }
   .chip button { border-radius: 999px; }

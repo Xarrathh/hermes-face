@@ -80,6 +80,14 @@
           "max": 1.5,
           "step": 0.01,
           "default": 1.0
+        },
+        {
+          "key": "transparency",
+          "label": "Feature opacity",
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.01,
+          "default": 1.0
         }
       ]
     },
@@ -346,22 +354,8 @@
       ]
     },
     {
-      "id": "features",
-      "label": "Features",
-      "params": [
-        {
-          "key": "transparency",
-          "label": "Transparency",
-          "min": 0.0,
-          "max": 1.0,
-          "step": 0.01,
-          "default": 1.0
-        }
-      ]
-    },
-    {
-      "id": "matrix",
-      "label": "Rynette",
+      "id": "colour",
+      "label": "Colour",
       "params": [
         {
           "key": "hue",
@@ -378,7 +372,13 @@
           "max": 1,
           "step": 0.01,
           "default": 0.88
-        },
+        }
+      ]
+    },
+    {
+      "id": "cells",
+      "label": "Cells",
+      "params": [
         {
           "key": "matPitch",
           "label": "Cells across",
@@ -466,7 +466,13 @@
           "max": 1.0,
           "step": 0.01,
           "default": 0.8
-        },
+        }
+      ]
+    },
+    {
+      "id": "crt",
+      "label": "Rain & CRT",
+      "params": [
         {
           "key": "matRain",
           "label": "Rain in front",

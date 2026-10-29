@@ -41,15 +41,10 @@
     for (const row of document.querySelectorAll('#paramGroups .row[data-effect]')) {
       row.hidden = Number(row.dataset.effect) !== cur;
     }
-    // a group whose rows are all gated away hides its heading too
-    for (const h of document.querySelectorAll('#paramGroups h2')) {
-      let node = h.nextElementSibling;
-      let any = false;
-      while (node && node.tagName !== 'H2') {
-        if (node.classList && node.classList.contains('row') && !node.hidden) any = true;
-        node = node.nextElementSibling;
-      }
-      h.hidden = !any;
+    // a group whose rows are all gated away hides its section too
+    for (const sec of document.querySelectorAll('#paramGroups details.group')) {
+      const rows = [...sec.querySelectorAll('.row')];
+      sec.hidden = rows.length > 0 && rows.every(r => r.hidden);
     }
   }
 
@@ -61,10 +56,18 @@
   async function buildEditor() {
     const host = $('#paramGroups');
     host.innerHTML = '';
+    // Ten headings and sixty sliders is a wall; each group is a <details> now, so the
+    // panel opens as a list and only the sections in use are unfolded. Head, Eyes and
+    // Cells start open -- those are the three anyone touches first.
+    const OPEN = new Set(['head', 'eyes', 'cells']);
     for (const g of schema.groups) {
-      const h = document.createElement('h2');
+      const sec = document.createElement('details');
+      sec.className = 'group';
+      if (OPEN.has(g.id)) sec.open = true;
+      const h = document.createElement('summary');
       h.textContent = g.label;
-      host.appendChild(h);
+      sec.appendChild(h);
+      host.appendChild(sec);
       for (const p of g.params) {
         const row = document.createElement('div');
         row.className = 'row';
@@ -91,7 +94,7 @@
             queueSave();
           });
           row.append(lbl, sel);
-          host.appendChild(row);
+          sec.appendChild(row);
           continue;
         }
 
@@ -114,7 +117,7 @@
         });
         input.dataset.key = p.key;
         row.append(label, input);
-        host.appendChild(row);
+        sec.appendChild(row);
       }
     }
     // presets: built in from the schema, plus whatever Pierre has saved
@@ -189,7 +192,22 @@
       }
       ph.appendChild(wrap);
     };
-    for (const name of Object.keys(PRESETS.builtin || {})) add(name, false);
+    // grouped by category, because fifteen chips in one wrap is a soup
+    const bucket = (name) => {
+      const n = name.toLowerCase();
+      if (n.startsWith('male')) return 'Male';
+      if (n.startsWith('female')) return 'Female';
+      return 'Other';
+    };
+    for (const cat of ['Male', 'Female', 'Other']) {
+      const names = Object.keys(PRESETS.builtin || {}).filter(n => bucket(n) === cat);
+      if (!names.length) continue;
+      const label = document.createElement('div');
+      label.className = 'presetCat';
+      label.textContent = cat;
+      ph.appendChild(label);
+      for (const name of names) add(name, false);
+    }
     for (const name of Object.keys(PRESETS.custom || {})) add(name, true);
   }
 
