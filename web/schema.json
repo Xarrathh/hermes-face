@@ -152,6 +152,15 @@
      "default": 0.4
     },
     {
+     "key": "eyeGlow",
+     "label": "Iris glow",
+     "min": 0,
+     "max": 1,
+     "step": 0.01,
+     "default": 1.0,
+     "_comment": "1 is the hologram iris, lit from inside. 0 is a matte iris that sits darker than the sclera, which is what a real eye does"
+    },
+    {
      "key": "lashes",
      "label": "Lashes",
      "min": 0.0,
@@ -372,6 +381,23 @@
      "max": 1,
      "step": 0.01,
      "default": 0.88
+    },
+    {
+     "key": "hue2",
+     "label": "Highlight hue",
+     "min": 0,
+     "max": 360,
+     "step": 1,
+     "default": 141,
+     "_comment": "shadows use Hue, highlights drift to this one: warm skin over cool shadow is most of what makes a face read as skin"
+    },
+    {
+     "key": "sat2",
+     "label": "Highlight sat",
+     "min": 0,
+     "max": 1,
+     "step": 0.01,
+     "default": 0.88
     }
    ]
   },
@@ -410,6 +436,15 @@
      "max": 1.2,
      "step": 0.005,
      "default": 0.8
+    },
+    {
+     "key": "matSpec",
+     "label": "Highlight white",
+     "min": 0,
+     "max": 1,
+     "step": 0.01,
+     "default": 1.0,
+     "_comment": "1 lets the brightest cells burn out to white like a specular; 0 keeps them the highlight hue, which is what skin needs -- a lit forehead is not a white blob"
     },
     {
      "key": "matLevels",
@@ -466,6 +501,32 @@
      "max": 1.0,
      "step": 0.01,
      "default": 0.8
+    },
+    {
+     "key": "matAO",
+     "label": "Socket & crease depth",
+     "min": 0,
+     "max": 2,
+     "step": 0.01,
+     "default": 1.0,
+     "_comment": "scales the shadows that do the anatomical work: eye sockets, under the nose, the mouth seam"
+    },
+    {
+     "key": "matLightX",
+     "label": "Key light across",
+     "min": -1,
+     "max": 1,
+     "step": 0.01,
+     "default": 0.0,
+     "_comment": "0 is the frontal bloom; negative lights from the viewer's left, which puts a shadow on the far cheek and gives the head a form"
+    },
+    {
+     "key": "matRim",
+     "label": "Rim light",
+     "min": 0,
+     "max": 1,
+     "step": 0.01,
+     "default": 0.0
     }
    ]
   },
