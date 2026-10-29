@@ -243,6 +243,7 @@
   const S = {
     state: 'idle',
     t: 0,
+    yaw: 0, pitch: 0, roll: 0, tYaw: 0, tPitch: 0, nextTurn: 2.5,
     blink: 0, blinkPhase: 0, nextBlink: 2.4, doubleBlink: 0, blinks: 0,
     gazeX: 0, gazeY: 0, tgx: 0, tgy: 0, nextSaccade: 2.0,
     browL: 0, browR: 0, browTL: 0, browTR: 0, nextBrow: 2.2, flash: 0, nextFlash: 6,
@@ -341,6 +342,22 @@
     S.gazeX = approach(S.gazeX, S.tgx * gm, 6, dt);
     S.gazeY = approach(S.gazeY, S.tgy * gm, 6, dt);
 
+    // head movement: the eyes lead, the head follows a beat later. Targets are re-drawn
+    // every few seconds and biased toward wherever the gaze went, which is what makes it
+    // look like the face is looking at things rather than swinging on a sine wave.
+    const hm = clamp(P.headTurn ?? 0.6, 0, 1);
+    S.nextTurn -= dt;
+    if (S.nextTurn <= 0) {
+      S.nextTurn = rnd(1.8, 5.0);
+      const bias = clamp(S.tgx, -1, 1) * 0.55;
+      S.tYaw = clamp(bias + rnd(-0.7, 0.7), -1, 1);
+      S.tPitch = clamp(-S.tgy * 0.45 + rnd(-0.35, 0.35), -1, 1);
+    }
+    S.yaw = approach(S.yaw, S.tYaw * hm, 1.9, dt);
+    S.pitch = approach(S.pitch, S.tPitch * hm, 1.7, dt);
+    // a slow roll: a head that is perfectly level reads as a cut-out
+    S.roll = approach(S.roll, Math.sin(t * 0.37) * 0.03 * hm + S.yaw * 0.02, 1.2, dt);
+
     // audio envelope -> mouth
     const amp = FIXED_AMP !== null ? FIXED_AMP : S.amp;
     const talking = S.state === 'speaking';
@@ -430,18 +447,18 @@
       ctx.ellipse(0, 0, hw, hh, 0, 0, TAU);
       // not near-black: over the dark rim of the cell face a black fill reads as a hole,
       // and the ear becomes a hoop. A dim green body makes it part of the head.
-      ctx.fillStyle = 'rgba(7,26,32,0.94)';
+      ctx.fillStyle = 'rgba(13,38,46,0.97)';  // tone inside, so it reads as an ear, not a hoop
       ctx.fill();
-      ctx.strokeStyle = rgba(COL.main, 0.88);
-      ctx.lineWidth = 1.4;
+      ctx.strokeStyle = rgba(COL.main, 0.92);
+      ctx.lineWidth = 2.6;      // it has to survive being quantised into cells
       ctx.shadowColor = rgba(COL.main, 0.55);
       ctx.shadowBlur = 10 * (P.glow ?? 1);
       ctx.stroke();
       ctx.shadowBlur = 0;
 
       // helix
-      ctx.strokeStyle = rgba(COL.main, 0.50);
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = rgba(COL.main, 0.62);
+      ctx.lineWidth = 1.6;
       ctx.beginPath();
       ctx.ellipse(-hw * 0.18, -hh * 0.05, hw * 0.58, hh * 0.66, 0, -0.5, Math.PI * 1.05);
       ctx.stroke();
@@ -642,6 +659,43 @@
     }
     c2.putImageData(img, 0, 0);
     SCULPT.bx = bx; SCULPT.by = by; SCULPT.bw = bw; SCULPT.bh = bh;
+  }
+
+  function drawTurnShade(hp, yaw, pitch) {
+    // Parallax alone reads as "the features are misaligned". A turn has to change the
+    // light too: the side the head turns away from goes dark, the side it turns toward
+    // catches a little more. One gradient, not a new field -- the field is cached and
+    // rebuilding 45k cells per frame for this would cost more than it is worth.
+    if (Math.abs(yaw) < 0.015 && Math.abs(pitch) < 0.015) return;
+    ctx.save();
+    ctx.clip(hp);
+    const box = [ux(-1.15), vy(-0.15), dU(2.3), dV(1.4)];
+    if (Math.abs(yaw) >= 0.015) {
+      const a = clamp(0.55 * Math.abs(yaw), 0, 0.55);
+      const g = ctx.createLinearGradient(ux(yaw > 0 ? -1 : 1), 0, ux(yaw > 0 ? 0.9 : -0.9), 0);
+      g.addColorStop(0, `rgba(0,0,0,${a})`);
+      g.addColorStop(0.75, 'rgba(0,0,0,0)');
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(box[0], box[1], box[2], box[3]);
+      // the lit side, barely: enough to say "facing me" rather than "evenly lit"
+      const l = ctx.createLinearGradient(ux(yaw > 0 ? 1 : -1), 0, ux(yaw > 0 ? 0.1 : -0.1), 0);
+      l.addColorStop(0, `rgba(255,255,255,${0.10 * Math.abs(yaw)})`);
+      l.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = l;
+      ctx.fillRect(box[0], box[1], box[2], box[3]);
+    }
+    if (Math.abs(pitch) >= 0.015) {
+      // looking up: the brow catches the light; looking down: the upper face shadows
+      const g = ctx.createLinearGradient(0, vy(0.05), 0, vy(0.85));
+      const a = clamp(0.45 * Math.abs(pitch), 0, 0.45);
+      if (pitch > 0) { g.addColorStop(0, `rgba(0,0,0,${a})`); g.addColorStop(0.6, 'rgba(0,0,0,0)'); }
+      else { g.addColorStop(0.4, 'rgba(0,0,0,0)'); g.addColorStop(1, `rgba(0,0,0,${a})`); }
+      g.addColorStop(pitch > 0 ? 1 : 0, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(box[0], box[1], box[2], box[3]);
+    }
+    ctx.restore();
   }
 
   function drawSculpt(hp) {
@@ -1369,14 +1423,26 @@
 
     // pass 1: the anatomy, alone on its own layer -- one flat base, the sculpt field,
     // the ears. No room, no rain, no shell lighting: the cells must measure the face.
+    // The head turns by parallax: the silhouette shifts and narrows, the features shift
+    // further than it does. That difference is the whole 3D cue -- there is no mesh here.
+    const nod = (S.state === 'speaking' ? Math.sin(t * 3.1) * 0.16 * clamp(S.amp * 2, 0, 1) : 0)
+                + (S.state === 'thinking' ? Math.sin(t * 0.9) * 0.10 : 0);
+    const yaw = S.yaw, pitch = S.pitch + nod;
+    const dxHead = yaw * dU(0.075), dyHead = pitch * dV(0.032);
+    const dxFace = yaw * dU(0.160), dyFace = pitch * dV(0.070);
+
     const lc = LAYER.c;
     lc.setTransform(DPR, 0, 0, DPR, 0, 0);
     lc.clearRect(0, 0, VW, VH);
     ctx = lc;
     ctx.save();
-    ctx.translate(0, S.breath);
+    ctx.translate(HEAD.cx + dxHead, HEAD.cy + dyHead);
+    ctx.rotate(S.roll);
+    ctx.scale(1 - 0.22 * Math.abs(yaw), 1 - 0.10 * Math.abs(pitch));
+    ctx.translate(-HEAD.cx, -HEAD.cy + S.breath);
     drawCellBase(hp);
     drawSculpt(hp);
+    drawTurnShade(hp, yaw, pitch);
     // Ears are part of the anatomy again: they get measured into the cells like the rest
     // of the head. The rim falloff is taught about them (see compositeCells), which is
     // what was eating them when they were measured in before.
@@ -1426,6 +1492,7 @@
 
 
     ctx.save();
+    ctx.translate(dxFace, dyFace);   // features travel further than the silhouette
     ctx.clip(hp);
     // Transparency is the features' own alpha, not the rain's
     ctx.globalAlpha = clamp(P.transparency ?? 1, 0, 1);
@@ -1524,6 +1591,7 @@
       return { fps: S.fps, state: S.state, aperture: S.aperture, head: { ...HEAD },
                blinks: S.blinks, blink: S.blink, browL: S.browL, browR: S.browR,
                nostril: S.nostril, earL: S.earL, earR: S.earR,
+               yaw: S.yaw, pitch: S.pitch, roll: S.roll,
                gazeX: S.gazeX, gazeY: S.gazeY, smile: P.smile,
                energy: S.pEnergy, bright: S.pBright };
     },
