@@ -592,7 +592,7 @@
     // leaves a stale relief map behind the new features
     const key = [cols, rows, bx.toFixed(1), by.toFixed(1),
                  P.eyeY, P.eyeU, P.eyeW, P.noseTop, P.noseLength, P.noseWidth,
-                 P.mouthY, P.mouthWidth, P.matLight].join('|');
+                 P.mouthY, P.mouthWidth, P.matLight, P.matLightY, P.matLightSpread].join('|');
     if (SCULPT.key === key) return;
     SCULPT.key = key;
 
@@ -628,7 +628,12 @@
         // and jaw-corner shadows, which stacked into "lit from the side with six
         // shadows" -- correct shading, wrong read.
         const light = clamp(P.matLight ?? 1, 0, 2);
-        s += 0.24 * light * g2(u, vn, 0, 0.24, 1.02, 0.38);
+        // Height and spread are parameters because the default bloom sat high on the
+        // skull, and with no hairline to cap it the forehead read as the biggest thing
+        // on the face. A lower, tighter key lights the brow and the cheeks instead.
+        const lightY = clamp(P.matLightY ?? 0.24, 0.05, 0.60);
+        const lightSpread = clamp(P.matLightSpread ?? 0.38, 0.15, 0.60);
+        s += 0.24 * light * g2(u, vn, 0, lightY, 1.02, lightSpread);
 
         // the light falls off to the edges and to the jaw: symmetric, one term each
         s -= 0.26 * Math.pow(clamp(nx, 0, 1.25), 2.2);
