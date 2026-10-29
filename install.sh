@@ -21,7 +21,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PREFIX="${PREFIX:-$HOME/.local/share/hermes-face}"
 BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
 UNIT_DIR="${UNIT_DIR:-$HOME/.config/systemd/user}"
-PORT="${PORT:-9120}"
+PORT="${HERMES_FACE_PORT:-${PORT:-9120}}"
 BROWSER="${BROWSER:-}"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 MAKE_VENV=1
@@ -301,7 +301,7 @@ else
   install -d "$BIN_DIR"
   install -m 0755 "$REPO/bin/hermes-face-kiosk" "$BIN_DIR/hermes-face-kiosk"
   say "  wrote $BIN_DIR/hermes-face-kiosk (no service installed)"
-  say "  start by hand: $PY $PREFIX/server.py"
+  say "  start by hand: HERMES_FACE_PORT=$PORT $PY $PREFIX/server.py"
 fi
 
 case ":$PATH:" in
