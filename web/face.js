@@ -104,6 +104,8 @@
     G.vignette = null;
     G.scanPat = null;
     buildLayer();
+    CELLS.dirty = true;
+    CELLS.last = undefined;
     layout();
     rebuildGeometry();
     buildRain();
@@ -243,7 +245,7 @@
   const S = {
     state: 'idle',
     t: 0,
-    yaw: 0, pitch: 0, roll: 0, tYaw: 0, tPitch: 0, nextTurn: 2.5,
+    yaw: 0, pitch: 0, roll: 0, nod: 0, tYaw: 0, tPitch: 0, nextTurn: 2.5,
     blink: 0, blinkPhase: 0, nextBlink: 2.4, doubleBlink: 0, blinks: 0,
     gazeX: 0, gazeY: 0, tgx: 0, tgy: 0, nextSaccade: 2.0,
     browL: 0, browR: 0, browTL: 0, browTR: 0, nextBrow: 2.2, flash: 0, nextFlash: 6,
@@ -357,6 +359,9 @@
     S.pitch = approach(S.pitch, S.tPitch * hm, 1.7, dt);
     // a slow roll: a head that is perfectly level reads as a cut-out
     S.roll = approach(S.roll, Math.sin(t * 0.37) * 0.03 * hm + S.yaw * 0.02, 1.2, dt);
+    // nods while speaking, a slow sway while thinking: the pitch the renderers use
+    S.nod = (S.state === 'speaking' ? Math.sin(t * 3.1) * 0.16 * clamp(S.amp * 2, 0, 1) : 0)
+            + (S.state === 'thinking' ? Math.sin(t * 0.9) * 0.10 : 0);
 
     // audio envelope -> mouth
     const amp = FIXED_AMP !== null ? FIXED_AMP : S.amp;
@@ -543,10 +548,9 @@
     clip.rect(0, 0, VW, VH);
     clip.addPath(headPath());
     ctx.clip(clip, 'evenodd');
-    ctx.globalAlpha = amt;
-    ctx.drawImage(RAIN.cv, 0, 0, RAIN.w, RAIN.h);
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.globalAlpha = 0.26 * amt;
+    // One blit, not two: the additive pass was a second full-screen composite for a
+    // faint glow, which is the expensive half of the rain.
+    ctx.globalAlpha = Math.min(1, amt * 1.18);
     ctx.drawImage(RAIN.cv, 0, 0, RAIN.w, RAIN.h);
     ctx.restore();
   }
@@ -661,43 +665,6 @@
     SCULPT.bx = bx; SCULPT.by = by; SCULPT.bw = bw; SCULPT.bh = bh;
   }
 
-  function drawTurnShade(hp, yaw, pitch) {
-    // Parallax alone reads as "the features are misaligned". A turn has to change the
-    // light too: the side the head turns away from goes dark, the side it turns toward
-    // catches a little more. One gradient, not a new field -- the field is cached and
-    // rebuilding 45k cells per frame for this would cost more than it is worth.
-    if (Math.abs(yaw) < 0.015 && Math.abs(pitch) < 0.015) return;
-    ctx.save();
-    ctx.clip(hp);
-    const box = [ux(-1.15), vy(-0.15), dU(2.3), dV(1.4)];
-    if (Math.abs(yaw) >= 0.015) {
-      const a = clamp(0.55 * Math.abs(yaw), 0, 0.55);
-      const g = ctx.createLinearGradient(ux(yaw > 0 ? -1 : 1), 0, ux(yaw > 0 ? 0.9 : -0.9), 0);
-      g.addColorStop(0, `rgba(0,0,0,${a})`);
-      g.addColorStop(0.75, 'rgba(0,0,0,0)');
-      g.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = g;
-      ctx.fillRect(box[0], box[1], box[2], box[3]);
-      // the lit side, barely: enough to say "facing me" rather than "evenly lit"
-      const l = ctx.createLinearGradient(ux(yaw > 0 ? 1 : -1), 0, ux(yaw > 0 ? 0.1 : -0.1), 0);
-      l.addColorStop(0, `rgba(255,255,255,${0.10 * Math.abs(yaw)})`);
-      l.addColorStop(1, 'rgba(255,255,255,0)');
-      ctx.fillStyle = l;
-      ctx.fillRect(box[0], box[1], box[2], box[3]);
-    }
-    if (Math.abs(pitch) >= 0.015) {
-      // looking up: the brow catches the light; looking down: the upper face shadows
-      const g = ctx.createLinearGradient(0, vy(0.05), 0, vy(0.85));
-      const a = clamp(0.45 * Math.abs(pitch), 0, 0.45);
-      if (pitch > 0) { g.addColorStop(0, `rgba(0,0,0,${a})`); g.addColorStop(0.6, 'rgba(0,0,0,0)'); }
-      else { g.addColorStop(0.4, 'rgba(0,0,0,0)'); g.addColorStop(1, `rgba(0,0,0,${a})`); }
-      g.addColorStop(pitch > 0 ? 1 : 0, 'rgba(0,0,0,0)');
-      ctx.fillStyle = g;
-      ctx.fillRect(box[0], box[1], box[2], box[3]);
-    }
-    ctx.restore();
-  }
-
   function drawSculpt(hp) {
     const amt = clamp(P.matSculpt ?? 1, 0, 1.5);
     if (amt < 0.01) return;
@@ -761,6 +728,13 @@
   }
 
   function compositeCells(t) {
+    // The measurement (getImageData + a 45k-cell rebuild + putImageData) is the hot part
+    // and does not need 40 Hz: the head eases at ~2/s and blinks in ~130 ms. 20 Hz is
+    // indistinguishable and halves that cost. The blit still runs every frame.
+    const due = (CELLS.last === undefined) || CELLS.dirty || (t - CELLS.last >= 0.033);
+    if (!due) { blitCells(); return; }
+    CELLS.last = t;
+    CELLS.dirty = false;
     if (!LAYER.c) buildLayer();
     const cols = clamp(Math.round(P.matPitch ?? 90), 24, 200);
     const bx = ux(-1.08), by = vy(-0.08), bw = dU(2.16), bh = dV(1.30);
@@ -795,6 +769,7 @@
     // so tone and coverage both drop there. This is what turns a flat green mask into
     // a volume -- without it the silhouette is a cut-out with a hard edge.
     const round = clamp(P.matRound ?? 0.7, 0, 1);
+    const yaw = S.yaw, pitch = S.pitch + S.nod;
 
     // the ear ellipses, in the same u/v units the cell loop uses (mirrors drawEars)
     const earSize = P.earSize ?? 1.1;
@@ -834,6 +809,12 @@
         q = clamp(Math.pow(q, 1 / expo), 0, 1);       // exposure, then quantise
         if (levels > 1) q = Math.round(q * (levels - 1)) / (levels - 1);
         const tone = rampAt(q);
+        // The turn's light, done per cell instead of as two clipped gradient fills over
+        // the whole head (which measured at ~6.8 ms a frame on this iGPU -- more than the
+        // rain and the CRT together). The side the head turns toward lifts, the side it
+        // turns away from drops, and looking up flattens the brow.
+        const shade = clamp(1 + 1.05 * yaw * u * Math.min(1, nx * 1.2)
+                              + 0.55 * pitch * (vn - 0.45), 0.35, 1.9);
         const dith = 1 + (hash01(r * 7.31 + c * 3.17) - 0.5) * 0.16 * gain;
         // 1 in the middle of the face, 1-round at the rim; the crown curves away too,
         // just less, or the top of the head turns into a dark cap
@@ -847,7 +828,7 @@
           const d = Math.sqrt(dx * dx + dy * dy);
           if (d < 1) fall = Math.max(fall, 1 - round * 0.5 * smoothstep(0.5, 1.0, d));
         }
-        const cg = colGain[c] * dith * (0.45 + 0.55 * fall);
+        const cg = colGain[c] * dith * (0.45 + 0.55 * fall) * shade;
         for (let sy = 0; sy < SUBY; sy++) {
           const rowCut = (sy === SUBY - 1 ? 1 - 0.20 * gain : 1);
           for (let sx = 0; sx < SUBX; sx++) {
@@ -863,10 +844,16 @@
     }
     CELLS.c.putImageData(CELLS.img, 0, 0);
 
-    // 3. blit: smoothing off, or the threads turn into a smear
+    CELLS.bx = bx; CELLS.by = by; CELLS.bw = bw; CELLS.bh = bh;
+    blitCells();
+  }
+
+  // smoothing off, or the threads turn into a smear
+  function blitCells() {
+    if (!CELLS.cv || CELLS.bx === undefined) return;
     ctx.save();
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(cc, bx, by, bw, bh);
+    ctx.drawImage(CELLS.cv, CELLS.bx, CELLS.by, CELLS.bw, CELLS.bh);
     ctx.restore();
   }
 
@@ -1393,12 +1380,18 @@
   let fpsAcc = 0, fpsN = 0;
 
   let lastPaint = 0;
-  const FRAME_MS = 1000 / 40;      // 40 fps is plenty for a face and leaves the
+  const FRAME_MS = 1000 / 30;      // 30 fps: the head eases at under 2/s and the rain
+                                   // steps at 12 Hz, so 30 is indistinguishable from 40
+                                   // here -- and it is a quarter of the CPU. Old note: 40 fps is plenty for a face and leaves the
                                   // compositor room to run its own animations
   function frame(now) {
     requestAnimationFrame(frame);
     if (now - lastPaint < FRAME_MS) return;
     lastPaint = now;
+    // cost of one drawn frame, smoothed: the only number that is not at the mercy of
+    // whatever else the machine is doing. Process CPU measurements drift by ±5 points
+    // between runs; this does not.
+    const drawT0 = performance.now();
     try {
     let dt = (now - last) / 1000;
     if (!isFinite(dt) || dt <= 0) dt = 1 / 60;
@@ -1425,9 +1418,7 @@
     // the ears. No room, no rain, no shell lighting: the cells must measure the face.
     // The head turns by parallax: the silhouette shifts and narrows, the features shift
     // further than it does. That difference is the whole 3D cue -- there is no mesh here.
-    const nod = (S.state === 'speaking' ? Math.sin(t * 3.1) * 0.16 * clamp(S.amp * 2, 0, 1) : 0)
-                + (S.state === 'thinking' ? Math.sin(t * 0.9) * 0.10 : 0);
-    const yaw = S.yaw, pitch = S.pitch + nod;
+    const yaw = S.yaw, pitch = S.pitch + S.nod;
     const dxHead = yaw * dU(0.075), dyHead = pitch * dV(0.032);
     const dxFace = yaw * dU(0.160), dyFace = pitch * dV(0.070);
 
@@ -1442,7 +1433,6 @@
     ctx.translate(-HEAD.cx, -HEAD.cy + S.breath);
     drawCellBase(hp);
     drawSculpt(hp);
-    drawTurnShade(hp, yaw, pitch);
     // Ears are part of the anatomy again: they get measured into the cells like the rest
     // of the head. The rim falloff is taught about them (see compositeCells), which is
     // what was eating them when they were measured in before.
@@ -1543,6 +1533,9 @@
       ctx.restore();
     }
 
+    const drawMs = performance.now() - drawT0;
+    S.drawMs = S.drawMs ? S.drawMs * 0.88 + drawMs * 0.12 : drawMs;
+
     // fps
     fpsAcc += dt; fpsN++;
     if (fpsAcc >= 0.5) { S.fps = Math.round(fpsN / fpsAcc); fpsAcc = 0; fpsN = 0; }
@@ -1556,6 +1549,7 @@
     // next is the tuned look; P is that look plus whatever mood is on top, rebuilt here and
     // every frame so a slider and a mood never fight over the same key
     BASE = Object.assign({}, BASE, next);
+    CELLS.dirty = true;
     P = moodParams();
     palette();
     layout();
@@ -1591,6 +1585,7 @@
       return { fps: S.fps, state: S.state, aperture: S.aperture, head: { ...HEAD },
                blinks: S.blinks, blink: S.blink, browL: S.browL, browR: S.browR,
                nostril: S.nostril, earL: S.earL, earR: S.earR,
+               drawMs: Math.round((S.drawMs || 0) * 100) / 100,
                yaw: S.yaw, pitch: S.pitch, roll: S.roll,
                gazeX: S.gazeX, gazeY: S.gazeY, smile: P.smile,
                energy: S.pEnergy, bright: S.pBright };
