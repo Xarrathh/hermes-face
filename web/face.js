@@ -1268,6 +1268,9 @@
     const smile = P.smile ?? 0.08;
     const cupid = P.cupid ?? 0.55;
     const glow = P.glow ?? 1;
+    // lip gloss: a multiplier rather than a fixed strength, so the wet look can go from
+    // matte to lacquered without touching anything else
+    const glossAmt = clamp(P.lipGloss ?? 1, 0, 2);
     const cyM = vy(vM);
     const a = S.aperture;
     const upH = dV(0.0142) * lip;
@@ -1398,9 +1401,9 @@
     lipPath();
     ctx.clip();
     const gloss = ctx.createLinearGradient(0, seam(0) - lowH * 0.2, 0, lower(0) + lowH * 0.9);
-    gloss.addColorStop(0, rgba(COL.core, 0.06 * glow));
-    gloss.addColorStop(0.30, rgba(COL.core, 0.26 * glow));   // the specular band
-    gloss.addColorStop(0.55, rgba(COL.core, 0.10 * glow));
+    gloss.addColorStop(0, rgba(COL.core, 0.06 * glow * glossAmt));
+    gloss.addColorStop(0.30, rgba(COL.core, 0.26 * glow * glossAmt));   // the specular band
+    gloss.addColorStop(0.55, rgba(COL.core, 0.10 * glow * glossAmt));
     gloss.addColorStop(1, rgba(COL.main, 0));
     ctx.fillStyle = gloss;
     ctx.fillRect(-mwS, seam(0), mwS * 2, lowH * 8);
@@ -1410,9 +1413,9 @@
     // makes the lips sit in front of the face instead of being drawn on it.
     ctx.save();
     lipPath();
-    ctx.strokeStyle = rgba(COL.main, 0.20 * glow);
+    ctx.strokeStyle = rgba(COL.main, 0.20 * glow * glossAmt);
     ctx.lineWidth = 2.0;
-    ctx.shadowColor = rgba(COL.main, 0.60 * glow);
+    ctx.shadowColor = rgba(COL.main, 0.60 * glow * glossAmt);
     ctx.shadowBlur = 14 * glow;
     ctx.stroke();
     ctx.shadowBlur = 0;
