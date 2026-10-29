@@ -432,7 +432,7 @@
       // and the ear becomes a hoop. A dim green body makes it part of the head.
       ctx.fillStyle = 'rgba(7,26,32,0.94)';
       ctx.fill();
-      ctx.strokeStyle = rgba(COL.main, 0.62);
+      ctx.strokeStyle = rgba(COL.main, 0.88);
       ctx.lineWidth = 1.4;
       ctx.shadowColor = rgba(COL.main, 0.55);
       ctx.shadowBlur = 10 * (P.glow ?? 1);
@@ -440,7 +440,7 @@
       ctx.shadowBlur = 0;
 
       // helix
-      ctx.strokeStyle = rgba(COL.main, 0.34);
+      ctx.strokeStyle = rgba(COL.main, 0.50);
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.ellipse(-hw * 0.18, -hh * 0.05, hw * 0.58, hh * 0.66, 0, -0.5, Math.PI * 1.05);
@@ -742,6 +742,15 @@
     // a volume -- without it the silhouette is a cut-out with a hard edge.
     const round = clamp(P.matRound ?? 0.7, 0, 1);
 
+    // the ear ellipses, in the same u/v units the cell loop uses (mirrors drawEars)
+    const earSize = P.earSize ?? 1.1;
+    const earOut = P.earOut ?? 0.55;
+    const earV = (P.earY ?? 0.44) + 0.095 * earSize;
+    const earRU = 0.040 * earSize + 0.014 * earOut;
+    const earRV = 0.095 * earSize;
+    const earHW = halfWidth(clamp(earV, 0, 1)) + 0.004 + 0.008 * earOut;
+    const earU = [-earHW, earHW];
+
     const black = clamp(P.matBlack ?? 0.03, 0, 0.45);
     const white = Math.max(black + 0.05, clamp(P.matWhite ?? 0.50, 0, 1.2));
     const levels = clamp(Math.round(P.matLevels ?? 1), 1, 9);
@@ -763,7 +772,8 @@
         const i = (r * cols + c) * 4;
         const a = src[i + 3] / 255;
         const xCell = bx + ((c + 0.5) / cols) * bw;
-        const nx = Math.abs((xCell - HEAD.cx) / (HEAD.w * 0.5)) / hw;
+        const u = (xCell - HEAD.cx) / (HEAD.w * 0.5);
+        const nx = Math.abs(u) / hw;
         if (a < 0.05) continue;                       // outside the silhouette
         const L = (0.2126 * src[i] + 0.7152 * src[i + 1] + 0.0722 * src[i + 2]) / 255;
         let q = clamp((L - black) / (white - black), 0, 1);
@@ -773,8 +783,16 @@
         const dith = 1 + (hash01(r * 7.31 + c * 3.17) - 0.5) * 0.16 * gain;
         // 1 in the middle of the face, 1-round at the rim; the crown curves away too,
         // just less, or the top of the head turns into a dark cap
-        const fall = (1 - round * smoothstep(0.70, 1.05, nx)) *
-                     (1 - round * 0.32 * (1 - smoothstep(0.01, 0.14, vn)));
+        let fall = (1 - round * smoothstep(0.70, 1.05, nx)) *
+                   (1 - round * 0.32 * (1 - smoothstep(0.01, 0.14, vn)));
+        // An ear sits outside the silhouette, where that falloff is fully black -- which
+        // is why measuring the ears in made them disappear. Inside an ear ellipse the
+        // cell gets the ear's own gentle falloff instead.
+        for (let e = 0; e < earU.length; e++) {
+          const dx = (u - earU[e]) / earRU, dy = (vn - earV) / earRV;
+          const d = Math.sqrt(dx * dx + dy * dy);
+          if (d < 1) fall = Math.max(fall, 1 - round * 0.5 * smoothstep(0.5, 1.0, d));
+        }
         const cg = colGain[c] * dith * (0.45 + 0.55 * fall);
         for (let sy = 0; sy < SUBY; sy++) {
           const rowCut = (sy === SUBY - 1 ? 1 - 0.20 * gain : 1);
@@ -1185,8 +1203,8 @@
     const glow = P.glow ?? 1;
     const cyM = vy(vM);
     const a = S.aperture;
-    const upH = dV(0.0105) * lip;
-    const lowH = dV(0.0140) * lip;
+    const upH = dV(0.0142) * lip;
+    const lowH = dV(0.0190) * lip;
     const N = 30;
 
     // Smile is geometry, not a vertical shift: the corners travel up while the
@@ -1225,7 +1243,10 @@
     for (let i = 1; i <= N; i++) { const x = xAt(i); ctx.lineTo(x, upper(x)); }
     for (let i = N; i >= 0; i--) { const x = xAt(i); ctx.lineTo(x, lower(x)); }
     ctx.closePath();
-    ctx.fillStyle = 'rgba(2,8,12,0.46)';
+    // Opaque. The translucent body was designed to sit on a hologram you could see
+    // through; on a cell face it just lets the cells show through the lips, which reads
+    // as a transparent mouth however high the Features transparency goes.
+    ctx.fillStyle = 'rgb(4,15,20)';      // fully solid: the lips occlude the cells
     ctx.fill();
 
     ctx.beginPath();
@@ -1234,10 +1255,10 @@
     for (let i = N; i >= 0; i--) { const x = xAt(i); ctx.lineTo(x, lower(x)); }
     ctx.closePath();
     const lg = ctx.createLinearGradient(0, cyM - upH * 3, 0, cyM + lowH * 3);
-    lg.addColorStop(0, rgba(COL.main, 0.22 * glow));
-    lg.addColorStop(0.45, rgba(COL.main, 0.07 * glow));
-    lg.addColorStop(0.8, rgba(COL.main, 0.16 * glow));
-    lg.addColorStop(1, rgba(COL.main, 0.04 * glow));
+    lg.addColorStop(0, rgba(COL.dim, 0.46 * glow));
+    lg.addColorStop(0.45, rgba(COL.deep, 0.62 * glow));
+    lg.addColorStop(0.78, rgba(COL.main, 0.30 * glow));
+    lg.addColorStop(1, rgba(COL.dim, 0.34 * glow));
     ctx.fillStyle = lg;
     ctx.fill();
 
@@ -1356,6 +1377,15 @@
     ctx.translate(0, S.breath);
     drawCellBase(hp);
     drawSculpt(hp);
+    // Ears are part of the anatomy again: they get measured into the cells like the rest
+    // of the head. The rim falloff is taught about them (see compositeCells), which is
+    // what was eating them when they were measured in before.
+    if (!OFF.has('ears')) {
+      ctx.save();
+      ctx.globalAlpha = 0.85;
+      drawEars();
+      ctx.restore();
+    }
     ctx.restore();
     ctx = mainCtx;
 
@@ -1364,16 +1394,6 @@
 
     ctx.save();
     ctx.translate(0, S.breath);
-
-    // Ears are vector, drawn over the cells: measured into the anatomy they sit in the
-    // band where the rim falloff goes black, so they vanished. Over the cells they read
-    // as ears -- the rim is what carries the shape at this cell size.
-    if (!OFF.has('ears')) {
-      ctx.save();
-      ctx.globalAlpha = 0.8;
-      drawEars();
-      ctx.restore();
-    }
 
     // thinking ring (under the face, so the features stay on top)
     if (S.think > 0.02) {

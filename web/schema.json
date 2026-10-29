@@ -708,8 +708,8 @@
       "eyeOpen": 1.25,
       "irisSize": 1.15,
       "matRound": 0.75,
-      "earSize": 1.0,
-      "earOut": 0.62
+      "earSize": 1.15,
+      "earOut": 0.72
     },
     "Matrix Threads": {
       "hue": 142,
