@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 audio/*.mp3
 audio/q-*.txt
+config.json
+history.json

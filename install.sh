@@ -148,9 +148,19 @@ done
 if [ -f "$REPO/INSTALL.md" ]; then install -m 0644 "$REPO/INSTALL.md" "$PREFIX/INSTALL.md"; fi
 
 # data: never clobbered. config.json holds the tuned look and the saved presets.
+# A clone carries config.example.json only: the live look is per-machine and is
+# deliberately not in git, so seed from the example when there is nothing to keep.
 if [ ! -f "$PREFIX/config.json" ]; then
-  install -m 0644 "$REPO/config.json" "$PREFIX/config.json"
-  say "  seeded config.json (the tuned look)"
+  SEED=""
+  for cand in "$REPO/config.json" "$REPO/config.example.json"; do
+    [ -f "$cand" ] && { SEED="$cand"; break; }
+  done
+  if [ -n "$SEED" ]; then
+    install -m 0644 "$SEED" "$PREFIX/config.json"
+    say "  seeded config.json from $(basename "$SEED")"
+  else
+    warn "no config.json or config.example.json to seed; the server will write defaults"
+  fi
 else
   say "  kept existing config.json"
 fi
