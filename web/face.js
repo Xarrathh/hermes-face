@@ -666,7 +666,9 @@
         }
 
         // nose: one highlight down the bridge, one soft shadow under the tip
-        s += 0.16 * g2(u, vn, 0, noseTop + noseLen * 0.50, noseW * 0.36, noseLen * 0.80);
+        // narrower and weaker than it was: at 0.16 over 0.36 nose-widths it read as a bright
+        // stripe down every face, which is what made the nose look like a beak
+        s += 0.10 * g2(u, vn, 0, noseTop + noseLen * 0.52, noseW * 0.26, noseLen * 0.72);
         s -= 0.13 * g2(u, vn, 0, noseTop + noseLen * 1.15, noseW * 0.95, 0.022);
 
         // mouth: the seam, and a small chin catch under it
