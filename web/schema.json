@@ -637,7 +637,8 @@
       "jawDrop": 1.2,
       "matLightY": 0.42,
       "matLightSpread": 0.26,
-      "forehead": 0.88
+      "forehead": 0.9,
+      "asymmetry": 0.42
     },
     "Male \u00b7 Sharp": {
       "hue": 168,
@@ -695,7 +696,8 @@
       "jawDrop": 1.25,
       "matLightY": 0.42,
       "matLightSpread": 0.26,
-      "forehead": 0.88
+      "forehead": 0.86,
+      "asymmetry": 0.34
     },
     "Male \u00b7 Weathered": {
       "hue": 122,
@@ -703,7 +705,7 @@
       "matPitch": 90,
       "matExposure": 1.0,
       "matBlack": 0.06,
-      "matWhite": 0.65,
+      "matWhite": 0.72,
       "matLevels": 1,
       "matRound": 0.85,
       "matSculpt": 1.0,
@@ -754,7 +756,8 @@
       "breath": 0.8,
       "matLightY": 0.42,
       "matLightSpread": 0.26,
-      "forehead": 0.88
+      "forehead": 0.86,
+      "asymmetry": 0.5
     },
     "Male \u00b7 Young": {
       "hue": 141,
@@ -811,7 +814,8 @@
       "blinkRate": 0.6,
       "matLightY": 0.42,
       "matLightSpread": 0.26,
-      "forehead": 0.88
+      "forehead": 0.8,
+      "asymmetry": 0.38
     },
     "Male \u00b7 Deep-set": {
       "hue": 178,
@@ -868,7 +872,8 @@
       "gaze": 0.3,
       "matLightY": 0.42,
       "matLightSpread": 0.26,
-      "forehead": 0.88
+      "forehead": 0.88,
+      "asymmetry": 0.3
     },
     "Female \u00b7 Soft": {
       "hue": 136,
@@ -925,7 +930,8 @@
       "blinkRate": 0.55,
       "matLightY": 0.42,
       "matLightSpread": 0.26,
-      "forehead": 0.85
+      "forehead": 0.82,
+      "asymmetry": 0.4
     },
     "Female \u00b7 Sleek": {
       "hue": 174,
@@ -981,10 +987,11 @@
       "jawDrop": 0.85,
       "matLightY": 0.42,
       "matLightSpread": 0.26,
-      "forehead": 0.85
+      "forehead": 0.86,
+      "asymmetry": 0.32
     },
     "Female \u00b7 Bold": {
-      "hue": 112,
+      "hue": 96,
       "sat": 1.0,
       "matPitch": 90,
       "matExposure": 1.0,
@@ -1038,7 +1045,8 @@
       "blinkRate": 0.5,
       "matLightY": 0.42,
       "matLightSpread": 0.26,
-      "forehead": 0.85
+      "forehead": 0.84,
+      "asymmetry": 0.5
     },
     "Female \u00b7 Elder": {
       "hue": 120,
@@ -1096,7 +1104,8 @@
       "browMotion": 0.45,
       "matLightY": 0.42,
       "matLightSpread": 0.26,
-      "forehead": 0.85
+      "forehead": 0.94,
+      "asymmetry": 0.52
     },
     "Female \u00b7 Cool": {
       "hue": 201,
@@ -1153,7 +1162,8 @@
       "headTurn": 0.35,
       "matLightY": 0.42,
       "matLightSpread": 0.26,
-      "forehead": 0.85
+      "forehead": 0.88,
+      "asymmetry": 0.36
     },
     "Robot": {
       "hue": 190,
@@ -1214,7 +1224,9 @@
       "jawDrop": 0.6,
       "browMotion": 0.0,
       "nostrilFlare": 0.0,
-      "earMotion": 0.0
+      "earMotion": 0.0,
+      "forehead": 1.06,
+      "asymmetry": 0.04
     },
     "Alien": {
       "hue": 100,
@@ -1275,15 +1287,17 @@
       "jawDrop": 0.7,
       "browMotion": 0.25,
       "nostrilFlare": 0.2,
-      "earMotion": 0.6
+      "earMotion": 0.6,
+      "forehead": 1.18,
+      "asymmetry": 0.08
     },
     "Goblin": {
       "hue": 92,
-      "sat": 1.0,
+      "sat": 0.9,
       "matPitch": 64,
       "matExposure": 0.95,
       "matBlack": 0.05,
-      "matWhite": 0.78,
+      "matWhite": 0.7,
       "matLevels": 3,
       "matRound": 0.55,
       "matSculpt": 0.85,
@@ -1336,7 +1350,9 @@
       "jawDrop": 1.45,
       "browMotion": 1.0,
       "nostrilFlare": 1.0,
-      "earMotion": 1.0
+      "earMotion": 1.0,
+      "forehead": 0.76,
+      "asymmetry": 0.62
     },
     "Spectre": {
       "hue": 195,
@@ -1395,7 +1411,9 @@
       "blinkRate": 0.1,
       "gaze": 0.25,
       "jawDrop": 0.5,
-      "browMotion": 0.1
+      "browMotion": 0.1,
+      "forehead": 0.96,
+      "asymmetry": 0.44
     },
     "Marble": {
       "hue": 212,
@@ -1455,7 +1473,9 @@
       "jawDrop": 0.7,
       "browMotion": 0.05,
       "nostrilFlare": 0.05,
-      "earMotion": 0.1
+      "earMotion": 0.1,
+      "forehead": 0.9,
+      "asymmetry": 0.12
     }
   }
 }
