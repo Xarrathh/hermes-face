@@ -404,6 +404,14 @@
           "default": 1
         },
         {
+          "key": "matRound",
+          "label": "3D falloff",
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.01,
+          "default": 0.7
+        },
+        {
           "key": "matSculpt",
           "label": "Relief",
           "min": 0.0,
@@ -698,7 +706,10 @@
       "faceShape": 0,
       "eyeW": 0.46,
       "eyeOpen": 1.25,
-      "irisSize": 1.15
+      "irisSize": 1.15,
+      "matRound": 0.75,
+      "earSize": 1.0,
+      "earOut": 0.62
     },
     "Matrix Threads": {
       "hue": 142,

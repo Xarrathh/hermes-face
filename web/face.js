@@ -428,7 +428,9 @@
       // shell
       ctx.beginPath();
       ctx.ellipse(0, 0, hw, hh, 0, 0, TAU);
-      ctx.fillStyle = `rgba(1,7,10,${0.60 + 0.30 * (P.fill ?? 0.86)})`;
+      // not near-black: over the dark rim of the cell face a black fill reads as a hole,
+      // and the ear becomes a hoop. A dim green body makes it part of the head.
+      ctx.fillStyle = 'rgba(7,26,32,0.94)';
       ctx.fill();
       ctx.strokeStyle = rgba(COL.main, 0.62);
       ctx.lineWidth = 1.4;
@@ -735,6 +737,11 @@
     const out = CELLS.img.data;
     out.fill(0);
 
+    // "the cells fall off to the back": a front-facing head curves away at the rim,
+    // so tone and coverage both drop there. This is what turns a flat green mask into
+    // a volume -- without it the silhouette is a cut-out with a hard edge.
+    const round = clamp(P.matRound ?? 0.7, 0, 1);
+
     const black = clamp(P.matBlack ?? 0.03, 0, 0.45);
     const white = Math.max(black + 0.05, clamp(P.matWhite ?? 0.50, 0, 1.2));
     const levels = clamp(Math.round(P.matLevels ?? 1), 1, 9);
@@ -748,9 +755,15 @@
     for (let c = 0; c < cols; c++) colGain[c] = 0.80 + 0.28 * hash01(c * 12.9898 + 78.233);
 
     for (let r = 0; r < rows; r++) {
+      // per-row geometry for the falloff: v in v-units and the silhouette half-width
+      const yCell = by + ((r + 0.5) / rows) * bh;
+      const vn = (yCell - HEAD.cy) / HEAD.h + 0.5;
+      const hw = Math.max(0.05, halfWidth(clamp(vn, 0, 1)));
       for (let c = 0; c < cols; c++) {
         const i = (r * cols + c) * 4;
         const a = src[i + 3] / 255;
+        const xCell = bx + ((c + 0.5) / cols) * bw;
+        const nx = Math.abs((xCell - HEAD.cx) / (HEAD.w * 0.5)) / hw;
         if (a < 0.05) continue;                       // outside the silhouette
         const L = (0.2126 * src[i] + 0.7152 * src[i + 1] + 0.0722 * src[i + 2]) / 255;
         let q = clamp((L - black) / (white - black), 0, 1);
@@ -758,7 +771,11 @@
         if (levels > 1) q = Math.round(q * (levels - 1)) / (levels - 1);
         const tone = rampAt(q);
         const dith = 1 + (hash01(r * 7.31 + c * 3.17) - 0.5) * 0.16 * gain;
-        const cg = colGain[c] * dith;
+        // 1 in the middle of the face, 1-round at the rim; the crown curves away too,
+        // just less, or the top of the head turns into a dark cap
+        const fall = (1 - round * smoothstep(0.70, 1.05, nx)) *
+                     (1 - round * 0.32 * (1 - smoothstep(0.01, 0.14, vn)));
+        const cg = colGain[c] * dith * (0.45 + 0.55 * fall);
         for (let sy = 0; sy < SUBY; sy++) {
           const rowCut = (sy === SUBY - 1 ? 1 - 0.20 * gain : 1);
           for (let sx = 0; sx < SUBX; sx++) {
@@ -767,7 +784,7 @@
             out[o] = Math.min(255, tone[0] * g);
             out[o + 1] = Math.min(255, tone[1] * g);
             out[o + 2] = Math.min(255, tone[2] * g);
-            out[o + 3] = a * 255;
+            out[o + 3] = a * fall * 255;
           }
         }
       }
@@ -1339,12 +1356,6 @@
     ctx.translate(0, S.breath);
     drawCellBase(hp);
     drawSculpt(hp);
-    // Ears are drawn with a bright rim + glow, which the measurement turns into
-    // glowing tabs at the temples. Dimmed into the anatomy they read as ears again.
-    ctx.save();
-    ctx.globalAlpha = 0.5;
-    drawEars();
-    ctx.restore();
     ctx.restore();
     ctx = mainCtx;
 
@@ -1353,6 +1364,16 @@
 
     ctx.save();
     ctx.translate(0, S.breath);
+
+    // Ears are vector, drawn over the cells: measured into the anatomy they sit in the
+    // band where the rim falloff goes black, so they vanished. Over the cells they read
+    // as ears -- the rim is what carries the shape at this cell size.
+    if (!OFF.has('ears')) {
+      ctx.save();
+      ctx.globalAlpha = 0.8;
+      drawEars();
+      ctx.restore();
+    }
 
     // thinking ring (under the face, so the features stay on top)
     if (S.think > 0.02) {

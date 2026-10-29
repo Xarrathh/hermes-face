@@ -33,8 +33,8 @@
     "smile": 0.08,
     "cupid": 0.55,
     "earY": 0.44,
-    "earSize": 1.1,
-    "earOut": 0.55,
+    "earSize": 1.0,
+    "earOut": 0.62,
     "earTilt": 0.1,
     "transparency": 1.0,
     "hue": 141,
@@ -59,7 +59,8 @@
     "browMotion": 0.65,
     "nostrilFlare": 0.6,
     "earMotion": 0.5,
-    "matSculpt": 1.0
+    "matSculpt": 1.0,
+    "matRound": 0.75
   },
   "voice": "en-GB-ThomasNeural",
   "presets": {
