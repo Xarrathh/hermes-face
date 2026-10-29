@@ -1409,6 +1409,23 @@
     ctx.fillRect(-mwS, seam(0), mwS * 2, lowH * 8);
     ctx.restore();
 
+    // The upper lip is a rounded surface as well, so it gets its own band along the top
+    // ridge -- weaker than the lower lip, because it faces away from a light that is in
+    // front of the face. Without it the mouth reads as one lit lip and one dead one.
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    lipPath();
+    ctx.clip();
+    const upTop = upper(0);
+    const upGloss = ctx.createLinearGradient(0, upTop - upH * 0.15, 0, seam(0) + upH * 0.15);
+    upGloss.addColorStop(0, rgba(COL.core, 0.04 * glow * glossAmt));
+    upGloss.addColorStop(0.32, rgba(COL.core, 0.17 * glow * glossAmt));   // ridge band
+    upGloss.addColorStop(0.72, rgba(COL.core, 0.06 * glow * glossAmt));
+    upGloss.addColorStop(1, rgba(COL.main, 0));
+    ctx.fillStyle = upGloss;
+    ctx.fillRect(-mwS, upTop - upH * 4, mwS * 2, Math.max(2, seam(0) - upTop + upH * 6));
+    ctx.restore();
+
     // ---- halo: a faint bloom around the whole mouth. At cell resolution this is what
     // makes the lips sit in front of the face instead of being drawn on it.
     ctx.save();
