@@ -412,6 +412,14 @@
           "default": 1.0
         },
         {
+          "key": "matLight",
+          "label": "Key light",
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.01,
+          "default": 1.0
+        },
+        {
           "key": "matGain",
           "label": "Cell texture",
           "min": 0.0,

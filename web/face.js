@@ -569,7 +569,7 @@
     // leaves a stale relief map behind the new features
     const key = [cols, rows, bx.toFixed(1), by.toFixed(1),
                  P.eyeY, P.eyeU, P.eyeW, P.noseTop, P.noseLength, P.noseWidth,
-                 P.mouthY, P.mouthWidth, P.cheekbone, P.jawWidth, P.browHeight].join('|');
+                 P.mouthY, P.mouthWidth, P.matLight].join('|');
     if (SCULPT.key === key) return;
     SCULPT.key = key;
 
@@ -588,9 +588,6 @@
     const noseW = P.noseWidth ?? 0.20;
     const mouthY = P.mouthY ?? 0.78;
     const mouthW = P.mouthWidth ?? 0.19;
-    const cheek = P.cheekbone ?? 1.0;
-    const jaw = P.jawWidth ?? 1.0;
-    const browH = P.browHeight ?? 0.056;
 
     for (let r = 0; r < rows; r++) {
       const v = by + ((r + 0.5) / rows) * bh;
@@ -602,50 +599,30 @@
         const nx = Math.abs(u) / hw;
         let s = 0.5;
 
-        // rounded volume, then the mass falling away below the cheekbone
-        s -= 0.10 * Math.pow(clamp(nx, 0, 1.2), 1.8);
-        s -= 0.20 * Math.pow(clamp((vn - 0.66) / 0.34, 0, 1), 1.5);
+        // ONE lamp, in front. A single wide bloom over the brow and the upper cheeks is
+        // the light source; every other term subtracts from it. The previous version had
+        // a key from the upper left plus a side ramp, two cheek fills, cheekbone shadows
+        // and jaw-corner shadows, which stacked into "lit from the side with six
+        // shadows" -- correct shading, wrong read.
+        const light = clamp(P.matLight ?? 1, 0, 2);
+        s += 0.24 * light * g2(u, vn, 0, 0.24, 1.02, 0.38);
 
-        // key light from the upper left, and the shadow side on the right
-        s += 0.20 * g2(u, vn, -0.18, 0.20, 0.72, 0.17);
-        s += 0.26 * g2(u, vn, -0.58, 0.60, 0.36, 0.18);
-        s += 0.10 * g2(u, vn, 0.60, 0.58, 0.42, 0.20);
-        s -= 0.22 * smoothstep(0.10, 0.85, u) * 0.5;
+        // the light falls off to the edges and to the jaw: symmetric, one term each
+        s -= 0.26 * Math.pow(clamp(nx, 0, 1.25), 2.2);
+        s -= 0.22 * Math.pow(clamp((vn - 0.58) / 0.42, 0, 1), 1.5);
 
-        // brow ridge, then the sockets under it
-        s += 0.10 * g2(u, vn, 0, eyeY - browH * 1.4, 0.95, 0.030);
-        s -= 0.16 * g2(u, vn, 0, eyeY - browH * 0.4, 0.95, 0.035);
+        // sockets: the only shadows with a job -- they seat the eyes in the face
         for (const side of [-1, 1]) {
-          s -= 0.30 * g2(u, vn, side * eyeU, eyeY, eyeW * 0.55, 0.058);
+          s -= 0.20 * g2(u, vn, side * eyeU, eyeY, eyeW * 0.55, 0.055);
         }
 
-        // cheekbones either side of the nose, and their shadow underneath
-        for (const side of [-1, 1]) {
-          s += 0.14 * cheek * g2(u, vn, side * 0.62 * cheek, 0.585, 0.26, 0.09);
-          s -= 0.12 * g2(u, vn, side * 0.50, 0.70, 0.30, 0.07);
-        }
+        // nose: one highlight down the bridge, one soft shadow under the tip
+        s += 0.16 * g2(u, vn, 0, noseTop + noseLen * 0.50, noseW * 0.36, noseLen * 0.80);
+        s -= 0.13 * g2(u, vn, 0, noseTop + noseLen * 1.15, noseW * 0.95, 0.022);
 
-        // nose: bridge highlight, tip, base shadow, nostrils
-        s += 0.30 * g2(u, vn, 0, noseTop + noseLen * 0.45, noseW * 0.38, noseLen * 0.85);
-        s += 0.22 * g2(u, vn, 0, noseTop + noseLen, noseW * 0.55, 0.028);
-        s -= 0.18 * g2(u, vn, 0, noseTop + noseLen * 1.18, noseW * 0.95, 0.020);
-        for (const side of [-1, 1]) {
-          s -= 0.20 * g2(u, vn, side * noseW * 0.52, noseTop + noseLen * 1.05, 0.035, 0.022);
-        }
-        s -= 0.10 * g2(u, vn, 0, noseTop + noseLen * 0.5, noseW * 0.12, noseLen * 0.6);
-
-        // lips: the upper lip catches a little light, the lower lip a little more,
-        // and the seam under it is the darkest thing on the face
-        s += 0.14 * g2(u, vn, 0, mouthY - 0.012, mouthW * 0.95, 0.016);
-        s += 0.20 * g2(u, vn, 0, mouthY + 0.020, mouthW * 0.80, 0.020);
-        s -= 0.26 * g2(u, vn, 0, mouthY + 0.004, mouthW * 1.00, 0.006);
-        s -= 0.12 * g2(u, vn, 0, mouthY + 0.050, mouthW * 0.60, 0.020);
-
-        // chin catch, jaw corners falling into shadow
-        s += 0.12 * g2(u, vn, 0, 0.905, 0.42, 0.055);
-        for (const side of [-1, 1]) {
-          s -= 0.16 * jaw * g2(u, vn, side * 0.72, 0.80, 0.18, 0.10);
-        }
+        // mouth: the seam, and a small chin catch under it
+        s -= 0.15 * g2(u, vn, 0, mouthY + 0.004, mouthW * 1.00, 0.007);
+        s += 0.07 * g2(u, vn, 0, 0.905, 0.45, 0.060);
 
         // fade the relief out at the silhouette, or it draws its own hard edge
         s = 0.5 + (s - 0.5) * clamp((1 - nx) / 0.14, 0, 1);
@@ -656,7 +633,7 @@
         // the cheekbones all add, and where the sum passes 1 the tone saturates into a
         // flat plateau with a hard edge -- visible as polygonal patches once the tone
         // bands are posterised.
-        const val = clamp(0.18 + (clamp(s, 0.05, 0.92) - 0.5) * 1.85, 0, 1) * 255;
+        const val = clamp(0.25 + (clamp(s, 0.05, 0.92) - 0.5) * 1.70, 0, 1) * 255;
         const o = (r * cols + c) * 4;
         out[o] = val; out[o + 1] = val; out[o + 2] = val; out[o + 3] = 255;
       }
