@@ -30,14 +30,24 @@ existing one. `params` are the flat set in `web/schema.json` — do not invent k
 
 ## Gotchas that cost hours here
 
+- **Hermes CLI flags differ per version** — 0.21.1 has `--query-file` and
+  `--create-if-missing`; 0.19.0 has neither and treats them as a hard argparse
+  failure (`unrecognized arguments`), which looks like a broken turn, not a version
+  gap. `hermes_caps()` in `server.py` probes `hermes chat --help` once and falls back
+  to `-q <prompt>` and resume-by-id. Check `hermes --version` on a new box before
+  assuming a turn bug is a code bug.
 - `hermes chat` has **no** `--format stream-json`. Reply is on **stdout**, the
   `session_id:` line on **stderr**. Turn shape: `hermes chat --query-file F -Q
-  --source tool [--resume SID] --continue <name> --create-if-missing`.
+  --source tool [--resume SID]` (or `-q <prompt>` on an old CLI).
+- **edge-tts throws a transient `403 Invalid response status`** from its websocket now
+  and then; the very next call succeeds. `synth()` retries three times, so one bad
+  token does not cost a reply its audio.
 - `systemctl --user enable --now` will not restart a running unit — always `restart`.
 - `edge-tts` from uv is CLI-only, not importable by systemd's interpreter: `synth()`
   must fall back to the CLI or every reply is silent.
 - Chromium derives the window class from the URL, so the kiosk window is
   `chrome-127.0.0.1__face_-Default`; `--class=` is ignored by `omarchy-launch-webapp`.
+  The port is **not** in the class, so changing `HERMES_FACE_PORT` does not break the rule.
   Never match a bare `chrome-localhost__-Default` — that hits every local webapp.
 - Hyprland 0.56 with the Lua config: `hyprctl dispatch …` is rejected. Use
   `hyprctl eval "hl.dispatch(hl.dsp.focus({ workspace = '1' }))"`; close with

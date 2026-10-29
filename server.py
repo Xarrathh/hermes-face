@@ -188,6 +188,32 @@ RE_SID = re.compile(r"[0-9A-Za-z_\-]{6,64}")
 FACE_SESSION = "hermes-face"
 
 
+_CAPS: dict[str, bool] = {}
+
+
+def hermes_caps() -> dict[str, bool]:
+    """Which `hermes chat` flags this machine's CLI actually has.
+
+    The face ran on 0.21 and broke on 0.19 in the same project: `--query-file` and
+    `--create-if-missing` are new, and passing an unknown flag is a hard argparse
+    failure, not a warning. Probe once, cache, and build the command from the
+    result so one copy of the code drives every box.
+    """
+    if _CAPS:
+        return _CAPS
+    caps = {"query_file": False, "create_if_missing": False}
+    try:
+        out = subprocess.run([str(HERMES), "chat", "--help"], capture_output=True,
+                             text=True, timeout=20).stdout
+    except Exception:                              # noqa: BLE001  (old CLI, no binary)
+        out = ""
+    caps["query_file"] = "--query-file" in out
+    caps["create_if_missing"] = "--create-if-missing" in out
+    _CAPS.update(caps)
+    return _CAPS
+
+
+
 def parse_quiet(out: str) -> tuple[str, str]:
     """Split `hermes chat -Q` output into (reply, session_id)."""
     text = out or ""
@@ -415,7 +441,21 @@ def synth(text: str, out: Path, voice: str | None = None) -> None:
     async def run() -> None:
         await edge_tts.Communicate(text, said, rate="+4%").save(str(out))
 
-    asyncio.run(run())
+    # Edge's websocket rejects the security token now and then (a bare
+    # `403 Invalid response status` that succeeds on the next attempt). One retry
+    # keeps a single bad token from silencing a whole reply.
+    last: Exception | None = None
+    for attempt in range(3):
+        try:
+            asyncio.run(run())
+            if out.is_file() and out.stat().st_size > 0:
+                return
+        except Exception as exc:                   # noqa: BLE001
+            last = exc
+        time.sleep(0.8 * (attempt + 1))
+    if last:
+        raise last
+    raise RuntimeError("edge-tts wrote no audio")
 
 
 def _auto_idle_after(seconds: float, seq: int) -> None:
@@ -534,13 +574,23 @@ def run_turn(text: str, seq: int) -> None:
         # final response plus a `session_id: ...` line, and nothing else. The old
         # invocation asked for `--format stream-json`, which this Hermes no longer
         # accepts, so every turn failed with "unrecognized arguments".
-        cmd = [str(HERMES), "chat", "--query-file", str(qfile), "-Q", "--source", "tool"]
+        cmd = [str(HERMES), "chat"]
+        caps = hermes_caps()
+        if caps["query_file"]:
+            cmd += ["--query-file", str(qfile)]
+        else:
+            # Pre-0.20 CLIs only take the prompt inline. Fine for a spoken line; the
+            # file exists either way so the cleanup path stays identical.
+            cmd += ["-q", PROMPT_PREFIX + heard]
+        cmd += ["-Q", "--source", "tool"]
         if RE_SID.fullmatch(sid or "") and sid != FACE_SESSION:
             cmd += ["--resume", sid]
-        else:
+        elif caps["create_if_missing"]:
             # A named session is the durable half of the trick: a fresh conversation
             # per turn would forget the last thing that was said to the face.
             cmd += ["--continue", FACE_SESSION, "--create-if-missing"]
+        # else: no --create-if-missing in this CLI, so the first turn opens a fresh
+        # session and every later turn resumes the id parsed out of it.
 
         reply, new_sid, interrupted = "", sid, False
         # The previous killed run can still hold the session lock for a moment, so a
