@@ -56,7 +56,8 @@ VOXTYPE_STATE = Path(os.environ.get("HERMES_FACE_VOXTYPE_STATE")
 
 PORT = int(os.environ.get("HERMES_FACE_PORT", "9120"))
 
-VOICES = [
+# Fallback for a box with no network (or no edge-tts): the voices this face shipped with.
+VOICES_STATIC = [
     ("en-ZA-LukeNeural", "South African — Luke"),
     ("en-ZA-LeahNeural", "South African — Leah"),
     ("en-GB-RyanNeural", "British — Ryan"),
@@ -69,6 +70,54 @@ VOICES = [
     ("en-AU-NatashaNeural", "Australian — Natasha"),
     ("en-IE-ConnorNeural", "Irish — Connor"),
 ]
+
+
+def _voice_label(short: str, locale: str, gender: str) -> str:
+    """`en-ZA · Leah (Female)`: locale first, because that is how a human picks one."""
+    name = short
+    if locale and name.startswith(locale + "-"):
+        name = name[len(locale) + 1:]
+    if name.endswith("Neural"):
+        name = name[:-6]
+    name = re.sub(r"(?<=[a-z])([A-Z])", r" \1", name)      # AriaMultilingual -> Aria Multilingual
+    return f"{locale} · {name}" + (f" ({gender})" if gender else "")
+
+
+def load_voices() -> list[tuple[str, str]]:
+    """Every voice the service knows about, English first.
+
+    edge-tts ships ~320 of them and the list changes; hardcoding eleven was throwing away
+    the whole point of the service. The module is tried first (the installer puts it in the
+    venv), then the CLI, then the static list -- a face with no network still speaks.
+    """
+    rows: list[tuple[str, str, str]] = []
+    try:
+        import edge_tts
+        for v in asyncio.run(edge_tts.list_voices()):
+            rows.append((v.get("ShortName", ""), v.get("Locale", ""), v.get("Gender", "")))
+    except Exception:                                   # noqa: BLE001
+        try:
+            cli = shutil.which("edge-tts") or str(Path.home() / ".local/bin/edge-tts")
+            raw = subprocess.run([cli, "--list-voices"], capture_output=True,
+                                  text=True, timeout=25).stdout
+            for line in raw.splitlines()[2:]:
+                parts = line.split()
+                if len(parts) >= 3 and parts[0].endswith("Neural"):
+                    loc = "-".join(parts[0].split("-")[:2])
+                    rows.append((parts[0], loc, parts[1]))
+        except Exception:                               # noqa: BLE001
+            return list(VOICES_STATIC)
+
+    rows = [r for r in rows if r[0]]
+    if not rows:
+        return list(VOICES_STATIC)
+    # English first (that is what the face speaks), then by locale, then by name
+    rows.sort(key=lambda r: (not r[1].startswith("en"), r[1], r[0]))
+    return [(short, _voice_label(short, loc, gen)) for short, loc, gen in rows]
+
+
+VOICES = load_voices()
+VOICE_SET = {v for v, _ in VOICES}
 
 PROMPT_PREFIX = (
     "Voice interface: your answer is spoken aloud by TTS and shown on screen. "
@@ -231,6 +280,9 @@ def hermes_voice() -> str:
 
 
 # --------------------------------------------------------------------- config
+VOICE_SET.add(hermes_voice())
+
+
 def load_config() -> dict:
     """The whole document, not just the two keys this module reads.
 
@@ -252,7 +304,7 @@ def load_config() -> dict:
         v = coerce(key, params.get(key, default))
         merged[key] = default if v is None else v
     cfg["params"] = merged
-    cfg["voice"] = cfg["voice"] if cfg.get("voice") in {v for v, _ in VOICES} else hermes_voice()
+    cfg["voice"] = cfg["voice"] if cfg.get("voice") in VOICE_SET else hermes_voice()
     return cfg
 
 
@@ -677,7 +729,7 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:                             # read-modify-write must be one step
                 cfg = load_config()
                 if isinstance(payload.get("voice"), str):
-                    if payload["voice"] in {v for v, _ in VOICES}:
+                    if payload["voice"] in VOICE_SET:
                         cfg["voice"] = payload["voice"]
                 changed = False
                 for key, value in payload.items():

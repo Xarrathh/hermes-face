@@ -252,13 +252,25 @@
     try {
       const r = await fetch('/voices');
       const j = await r.json();
+      // 300+ voices is a wall of options, so group them by language. The server sorts
+      // English first and then by locale, so the groups come out contiguous.
       const sel = $('#voice');
       sel.innerHTML = '';
+      let group = null, groupKey = '';
       for (const [id, label] of j.voices) {
+        // group by the voice id's language part, not by the label: the label format is
+        // for humans and the fallback list does not use it at all
+        const key = (id.split('-')[0] || '').toLowerCase();
+        if (key !== groupKey) {
+          group = document.createElement('optgroup');
+          group.label = key === 'en' ? 'English' : key.toUpperCase();
+          sel.appendChild(group);
+          groupKey = key;
+        }
         const o = document.createElement('option');
         o.value = id; o.textContent = label;
         if (id === j.current) o.selected = true;
-        sel.appendChild(o);
+        group.appendChild(o);
       }
       sel.addEventListener('change', async () => {
         await fetch('/params', {
