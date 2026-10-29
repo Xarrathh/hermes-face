@@ -16,7 +16,12 @@
 
   const cv = document.getElementById('face');
   if (!cv) return;
-  const ctx = cv.getContext('2d', { alpha: false });
+  const mainCtx = cv.getContext('2d', { alpha: false });
+  // ctx follows whichever pass is drawing. In cell mode the anatomy is rendered onto
+  // its own transparent layer first, so the quantiser reads shading without the room,
+  // the rain or the outline in it. Every draw function uses `ctx`, so swapping the
+  // target is all it takes -- no function signature changes.
+  let ctx = mainCtx;
 
   const QS = new URLSearchParams(location.search);
   const FREEZE = QS.has('freeze') ? Number(QS.get('freeze')) : null;
@@ -59,6 +64,7 @@
     COL.core = hsl2rgb(h, s * 0.22, 0.94);
     COL.dim = hsl2rgb(h, s * 0.95, 0.36);
     COL.deep = hsl2rgb(h, s, 0.10);
+    COL.ramp = rampStops(h, s);        // the cell quantiser's six-stop ramp
   }
 
   /* ---------------------------------------------------------------- layout */
@@ -97,6 +103,7 @@
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     G.vignette = null;
     G.scanPat = null;
+    buildLayer();
     layout();
     rebuildGeometry();
     buildMotes();
@@ -1272,6 +1279,261 @@
     ctx.restore();
   }
 
+  /* ------------------------------------------------------------ sculpt field */
+  // The measurement in compositeCells() can only see what the anatomy drew, and this
+  // project's shell is a fairly even dark glass with soft washes -- measuring it alone
+  // gives a flat green mask. The first Rynette face had definition because its tone
+  // came from a sculpted luminance field: a key light, brow ridge, sunken sockets,
+  // cheek volume, nose bridge, lip relief, jaw falling into shadow.
+  //
+  // So the field comes back, keyed to THIS anatomy's parameters (eyeY, eyeU, noseTop,
+  // noseLength, mouthY, cheekbone, jawWidth...), so a slider moves the relief with the
+  // feature. It is painted into the anatomy layer as a grey relief map and composited
+  // with 'overlay': neutral grey changes nothing, lighter sculpts out, darker cuts in.
+  //
+  // Built once per resize / param change -- it does not animate -- then blitted by the
+  // head's own translate, so breathing still moves it with the face.
+  const SCULPT = { cv: null, c: null, w: 0, h: 0, key: '' };
+
+  const g2 = (u, v, cu, cv, su, sv) => {
+    const x = (u - cu) / su, y = (v - cv) / sv;
+    return Math.exp(-(x * x + y * y) * 0.5);
+  };
+
+  function buildSculpt() {
+    const cols = clamp(Math.round(P.matPitch ?? 90), 24, 200) * 2;
+    const bx = ux(-1.08), by = vy(-0.08), bw = dU(2.16), bh = dV(1.30);
+    const rows = Math.max(8, Math.round(bh / (bw / cols)));
+    // the key must carry every param the field reads, or sliding the eye line
+    // leaves a stale relief map behind the new features
+    const key = [cols, rows, bx.toFixed(1), by.toFixed(1),
+                 P.eyeY, P.eyeU, P.eyeW, P.noseTop, P.noseLength, P.noseWidth,
+                 P.mouthY, P.mouthWidth, P.cheekbone, P.jawWidth, P.browHeight].join('|');
+    if (SCULPT.key === key) return;
+    SCULPT.key = key;
+
+    const cv2 = SCULPT.cv || document.createElement('canvas');
+    SCULPT.cv = cv2;
+    cv2.width = cols; cv2.height = rows;
+    const c2 = SCULPT.c || (SCULPT.c = cv2.getContext('2d', { willReadFrequently: true }));
+    const img = c2.createImageData(cols, rows);
+    const out = img.data;
+
+    const eyeY = P.eyeY ?? 0.5;
+    const eyeU = P.eyeU ?? 0.42;            // u units, 0..1 half-width apart
+    const eyeW = P.eyeW ?? 0.46;
+    const noseTop = P.noseTop ?? 0.49;
+    const noseLen = P.noseLength ?? 0.17;
+    const noseW = P.noseWidth ?? 0.20;
+    const mouthY = P.mouthY ?? 0.78;
+    const mouthW = P.mouthWidth ?? 0.19;
+    const cheek = P.cheekbone ?? 1.0;
+    const jaw = P.jawWidth ?? 1.0;
+    const browH = P.browHeight ?? 0.056;
+
+    for (let r = 0; r < rows; r++) {
+      const v = by + ((r + 0.5) / rows) * bh;
+      const vn = (v - HEAD.cy) / HEAD.h + 0.5;          // 0 crown -> 1 chin, in v units
+      const hw = Math.max(0.05, halfWidth(clamp(vn, 0, 1)));
+      for (let c = 0; c < cols; c++) {
+        const x = bx + ((c + 0.5) / cols) * bw;
+        const u = (x - HEAD.cx) / (HEAD.w * 0.5);       // -1..1 across the head
+        const nx = Math.abs(u) / hw;
+        let s = 0.5;
+
+        // rounded volume, then the mass falling away below the cheekbone
+        s -= 0.10 * Math.pow(clamp(nx, 0, 1.2), 1.8);
+        s -= 0.20 * Math.pow(clamp((vn - 0.66) / 0.34, 0, 1), 1.5);
+
+        // key light from the upper left, and the shadow side on the right
+        s += 0.20 * g2(u, vn, -0.18, 0.20, 0.72, 0.17);
+        s += 0.26 * g2(u, vn, -0.58, 0.60, 0.36, 0.18);
+        s += 0.10 * g2(u, vn, 0.60, 0.58, 0.42, 0.20);
+        s -= 0.22 * smoothstep(0.10, 0.85, u) * 0.5;
+
+        // brow ridge, then the sockets under it
+        s += 0.10 * g2(u, vn, 0, eyeY - browH * 1.4, 0.95, 0.030);
+        s -= 0.16 * g2(u, vn, 0, eyeY - browH * 0.4, 0.95, 0.035);
+        for (const side of [-1, 1]) {
+          s -= 0.30 * g2(u, vn, side * eyeU, eyeY, eyeW * 0.55, 0.058);
+        }
+
+        // cheekbones either side of the nose, and their shadow underneath
+        for (const side of [-1, 1]) {
+          s += 0.14 * cheek * g2(u, vn, side * 0.62 * cheek, 0.585, 0.26, 0.09);
+          s -= 0.12 * g2(u, vn, side * 0.50, 0.70, 0.30, 0.07);
+        }
+
+        // nose: bridge highlight, tip, base shadow, nostrils
+        s += 0.30 * g2(u, vn, 0, noseTop + noseLen * 0.45, noseW * 0.38, noseLen * 0.85);
+        s += 0.22 * g2(u, vn, 0, noseTop + noseLen, noseW * 0.55, 0.028);
+        s -= 0.18 * g2(u, vn, 0, noseTop + noseLen * 1.18, noseW * 0.95, 0.020);
+        for (const side of [-1, 1]) {
+          s -= 0.20 * g2(u, vn, side * noseW * 0.52, noseTop + noseLen * 1.05, 0.035, 0.022);
+        }
+        s -= 0.10 * g2(u, vn, 0, noseTop + noseLen * 0.5, noseW * 0.12, noseLen * 0.6);
+
+        // lips: the upper lip catches a little light, the lower lip a little more,
+        // and the seam under it is the darkest thing on the face
+        s += 0.14 * g2(u, vn, 0, mouthY - 0.012, mouthW * 0.95, 0.016);
+        s += 0.20 * g2(u, vn, 0, mouthY + 0.020, mouthW * 0.80, 0.020);
+        s -= 0.26 * g2(u, vn, 0, mouthY + 0.004, mouthW * 1.00, 0.006);
+        s -= 0.12 * g2(u, vn, 0, mouthY + 0.050, mouthW * 0.60, 0.020);
+
+        // chin catch, jaw corners falling into shadow
+        s += 0.12 * g2(u, vn, 0, 0.905, 0.42, 0.055);
+        for (const side of [-1, 1]) {
+          s -= 0.16 * jaw * g2(u, vn, side * 0.72, 0.80, 0.18, 0.10);
+        }
+
+        // fade the relief out at the silhouette, or it draws its own hard edge
+        s = 0.5 + (s - 0.5) * clamp((1 - nx) / 0.14, 0, 1);
+        const val = clamp(s, 0, 1) * 255;
+        const o = (r * cols + c) * 4;
+        out[o] = val; out[o + 1] = val; out[o + 2] = val; out[o + 3] = 255;
+      }
+    }
+    c2.putImageData(img, 0, 0);
+    SCULPT.bx = bx; SCULPT.by = by; SCULPT.bw = bw; SCULPT.bh = bh;
+  }
+
+  function drawSculpt(hp) {
+    const amt = clamp(P.matSculpt ?? 1, 0, 1.5);
+    if (amt < 0.01) return;
+    buildSculpt();
+    ctx.save();
+    ctx.clip(hp);              // relief belongs to the head, not to the room
+    ctx.globalCompositeOperation = 'overlay';
+    ctx.globalAlpha = Math.min(1, amt);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(SCULPT.cv, SCULPT.bx, SCULPT.by, SCULPT.bw, SCULPT.bh);
+    ctx.restore();
+  }
+
+  /* ------------------------------------------------------- cell quantiser */
+  // The first Rynette face got its definition from one idea: the portrait is not
+  // painted, it is measured. Draw the anatomy, measure it cell by cell, then rebuild
+  // it out of quantised tones on a fixed ramp, each cell a fine vertical thread.
+  //
+  // Here the anatomy being measured is this project's -- shape, shading, eyes, brows,
+  // nose, mouth -- and it is rendered onto its own transparent layer first, so the
+  // measurement contains no room, no rain and no outline. Every slider therefore still
+  // moves the definition: the cells are downstream of the anatomy, not a replacement
+  // for it. The vector features are then drawn again on top at full resolution, which
+  // is what keeps it a face and not a mosaic.
+  const LAYER = { cv: null, c: null };
+  const CELLS = { cv: null, c: null, sm: null, smc: null, img: null, colGain: null, cols: 0, rows: 0 };
+  const SUBX = 3, SUBY = 2;                  // sub-pixels per cell: the thread profile
+  let PORTRAIT = true;
+
+  function rampStops(h, s) {
+    // near-black teal -> deep -> matrix green -> hot -> white. Same six-stop shape as
+    // the original face, keyed to the hue/sat sliders so the editor still owns colour.
+    return [
+      [0.00, hsl2rgb(h, s * 0.95, 0.015)],
+      [0.18, hsl2rgb(h, s * 0.98, 0.060)],
+      [0.40, hsl2rgb(h, s, 0.170)],
+      [0.62, hsl2rgb(h, s, 0.360)],
+      [0.82, hsl2rgb(h, s * 0.75, 0.640)],
+      [0.94, hsl2rgb(h, s * 0.40, 0.840)],
+      [1.00, hsl2rgb(h, s * 0.08, 0.980)],
+    ];
+  }
+
+  function rampAt(L) {
+    const r = COL.ramp || (COL.ramp = rampStops(P.hue ?? 186, P.sat ?? 0.78));
+    let i = 0;
+    while (i < r.length - 2 && L > r[i + 1][0]) i++;
+    const p0 = r[i][0], c0 = r[i][1], p1 = r[i + 1][0], c1 = r[i + 1][1];
+    const k = p1 > p0 ? clamp((L - p0) / (p1 - p0), 0, 1) : 0;
+    return [lerp(c0[0], c1[0], k) | 0, lerp(c0[1], c1[1], k) | 0, lerp(c0[2], c1[2], k) | 0];
+  }
+
+  function buildLayer() {
+    const layer = LAYER.cv || document.createElement('canvas');
+    layer.width = cv.width;
+    layer.height = cv.height;
+    LAYER.c = layer.getContext('2d');          // transparent: alpha is the silhouette
+    LAYER.cv = layer;
+  }
+
+  function compositeCells(t) {
+    if (!LAYER.c) buildLayer();
+    const cols = clamp(Math.round(P.matPitch ?? 90), 24, 200);
+    const bx = ux(-1.08), by = vy(-0.08), bw = dU(2.16), bh = dV(1.30);
+    const rows = Math.max(4, Math.round(bh / (bw / cols)));
+
+    // 1. measure: downsample the anatomy to one pixel per cell. Drawing with smoothing
+    //    on means each cell pixel is the average of what the anatomy actually drew --
+    //    the key light, the cheek shadow, a lit iris, the dark of a mouth.
+    let sm = CELLS.sm;
+    if (!sm) { sm = document.createElement('canvas'); CELLS.sm = sm; }
+    if (sm.width !== cols || sm.height !== rows) { sm.width = cols; sm.height = rows; }
+    if (!CELLS.smc) CELLS.smc = sm.getContext('2d', { willReadFrequently: true });
+    const smc = CELLS.smc;
+    smc.clearRect(0, 0, cols, rows);
+    smc.imageSmoothingEnabled = true;
+    smc.drawImage(LAYER.cv, bx * DPR, by * DPR, bw * DPR, bh * DPR, 0, 0, cols, rows);
+    const src = smc.getImageData(0, 0, cols, rows).data;
+
+    // 2. rebuild: one flat tone per cell, drawn as SUBX threads by SUBY rows
+    const tw = cols * SUBX, th = rows * SUBY;
+    let cc = CELLS.cv;
+    if (!cc) { cc = document.createElement('canvas'); CELLS.cv = cc; }
+    if (cc.width !== tw || cc.height !== th) {
+      cc.width = tw; cc.height = th; CELLS.img = null;
+    }
+    if (!CELLS.c) CELLS.c = cc.getContext('2d');
+    if (!CELLS.img) CELLS.img = CELLS.c.createImageData(tw, th);
+    const out = CELLS.img.data;
+    out.fill(0);
+
+    const black = clamp(P.matBlack ?? 0.03, 0, 0.45);
+    const white = Math.max(black + 0.05, clamp(P.matWhite ?? 0.50, 0, 1.2));
+    const levels = clamp(Math.round(P.matLevels ?? 1), 1, 9);
+    const gain = clamp(P.matGain ?? 0.8, 0, 1);
+    const expo = Math.max(0.2, P.matExposure ?? 1.6);
+
+    // per-column gain: deterministic, so the grid has the texture of cloth rather than
+    // of noise. This is what stopped the original face reading as a blurred photo.
+    if (!CELLS.colGain || CELLS.colGain.length !== cols) CELLS.colGain = new Float32Array(cols);
+    const colGain = CELLS.colGain;
+    for (let c = 0; c < cols; c++) colGain[c] = 0.80 + 0.28 * hash01(c * 12.9898 + 78.233);
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const i = (r * cols + c) * 4;
+        const a = src[i + 3] / 255;
+        if (a < 0.05) continue;                       // outside the silhouette
+        const L = (0.2126 * src[i] + 0.7152 * src[i + 1] + 0.0722 * src[i + 2]) / 255;
+        let q = clamp((L - black) / (white - black), 0, 1);
+        q = clamp(Math.pow(q, 1 / expo), 0, 1);       // exposure, then quantise
+        if (levels > 1) q = Math.round(q * (levels - 1)) / (levels - 1);
+        const tone = rampAt(q);
+        const dith = 1 + (hash01(r * 7.31 + c * 3.17) - 0.5) * 0.16 * gain;
+        const cg = colGain[c] * dith;
+        for (let sy = 0; sy < SUBY; sy++) {
+          const rowCut = (sy === SUBY - 1 ? 1 - 0.20 * gain : 1);
+          for (let sx = 0; sx < SUBX; sx++) {
+            const g = (0.45 + 0.55 * SUB_GAIN[sx]) * cg * rowCut;
+            const o = ((r * SUBY + sy) * tw + c * SUBX + sx) * 4;
+            out[o] = Math.min(255, tone[0] * g);
+            out[o + 1] = Math.min(255, tone[1] * g);
+            out[o + 2] = Math.min(255, tone[2] * g);
+            out[o + 3] = a * 255;
+          }
+        }
+      }
+    }
+    CELLS.c.putImageData(CELLS.img, 0, 0);
+
+    // 3. blit: smoothing off, or the threads turn into a smear
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(cc, bx, by, bw, bh);
+    ctx.restore();
+  }
+
   function drawShell(t, hp) {
     const cx = ux(0);
     const glow = P.glow ?? 1;
@@ -1361,19 +1623,21 @@
 
     drawHairFront();
 
-    // surface effect: the shell, motes, or nothing
-    const effect = clamp(Math.round(P.effect ?? 0), 0, 4);
-    if (effect === 0) drawWire(hp, t);
-    else if (effect === 1) drawMotes(hp, t);
-    else if (effect === 3) drawCircuit(hp, t);
-    else if (effect === 4) drawMatrix(hp, t);
-    // the thread grid goes over whichever shell effect is selected: it is the
-    // surface of the head, not another effect competing with it
-    drawThreads(t);
+    // Surface effects and the thread overlay belong to the hologram mode only. In
+    // cell mode the grid IS the surface, and the extra passes would be measured into
+    // the tone map and turn the face to mush.
+    if (!PORTRAIT) {
+      const effect = clamp(Math.round(P.effect ?? 0), 0, 4);
+      if (effect === 0) drawWire(hp, t);
+      else if (effect === 1) drawMotes(hp, t);
+      else if (effect === 3) drawCircuit(hp, t);
+      else if (effect === 4) drawMatrix(hp, t);
+      drawThreads(t);
+    }
 
     // scan band
     const scan = P.scan ?? 0.55;
-    if (scan > 0.01 && !OFF.has('scan')) {
+    if (!PORTRAIT && scan > 0.01 && !OFF.has('scan')) {
       const k = (t * (0.055 + 0.045 * look.speed) + 0.12) % 1;
       const y = vy(0.02 + k * 0.96);
       const hgt = dV(0.085);
@@ -1400,7 +1664,9 @@
     ctx.globalCompositeOperation = 'source-over';
     ctx.restore();
 
-    // rim light: soft halo + hot core stroke
+    // rim light: soft halo + hot core stroke. Skipped in cell mode: the silhouette is
+    // the cells themselves, and a stroked outline draws a mask around the face.
+    if (!PORTRAIT) {
     ctx.save();
     ctx.strokeStyle = rgba(COL.main, 0.30 * glow * S.flick);
     ctx.lineWidth = 3.4;
@@ -1416,6 +1682,7 @@
     ctx.lineWidth = 1.4;
     ctx.stroke(hp);
     ctx.restore();
+    }
   }
 
   /* ---------------------------------------------------------------- eyes */
@@ -1952,15 +2219,43 @@
     updateSenses(dt, t);
 
     drawBackdrop(t);
-    drawBgEffect(t);
+    if (!PORTRAIT) drawBgEffect(t);
+
+    PORTRAIT = clamp(Math.round(P.matPortrait ?? 0), 0, 1) === 0;
+    const hp = headPath();
+
+    if (PORTRAIT) {
+      // pass 1: the anatomy, alone on its own layer
+      const lc = LAYER.c;
+      lc.setTransform(DPR, 0, 0, DPR, 0, 0);
+      lc.clearRect(0, 0, VW, VH);
+      ctx = lc;
+      ctx.save();
+      ctx.translate(0, S.breath);
+      drawHairBehind();
+      drawShell(t, hp);
+      drawSculpt(hp);          /* the definition, before it is measured */
+      // Ears are drawn with a bright rim + glow, which the measurement turns into
+      // glowing tabs at the temples. Dimmed into the anatomy they read as ears again.
+      ctx.save();
+      ctx.globalAlpha = 0.5;
+      drawEars();
+      ctx.restore();
+      ctx.restore();
+      ctx = mainCtx;
+      // pass 2: measure it, rebuild it as quantised cells. The vector features are
+      // drawn below, on top of this, which is what keeps it reading as a face.
+      compositeCells(t);
+    }
 
     ctx.save();
     ctx.translate(0, S.breath);
-    if (!OFF.has('projector')) drawProjector(t);
-    drawHairBehind();
-    const hp = headPath();
-    drawShell(t, hp);
-    drawEars();
+    if (!PORTRAIT) {
+      if (!OFF.has('projector')) drawProjector(t);
+      drawHairBehind();
+      drawShell(t, hp);
+      drawEars();
+    }
 
     // thinking ring (under the face, so the features stay on top)
     if (S.think > 0.02) {

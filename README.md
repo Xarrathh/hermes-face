@@ -37,13 +37,53 @@ bin/hermes-face-kiosk app-window / fullscreen kiosk launcher (Chromium)
 INSTALL.md            prerequisites, kiosk + appliance setup, troubleshooting
 ```
 
+### Cell mode (the current face)
+
+Pierre's ask: *my* face's definition (the particles/cells) carrying *their* features
+(eyes, ears, nose, mouth), with the other effects off, no hair, no head outline, and
+the editor still in charge.
+
+How it is built, in `web/face.js`:
+
+1. **The anatomy is rendered onto its own transparent layer** (`LAYER`), with `ctx`
+   swapped for the pass: the shell shading, the sculpt, the ears, no room, no rain,
+   no outline. Every draw function already uses `ctx`, so swapping the target is the
+   whole refactor.
+2. **`drawSculpt()` paints the definition in.** Measuring this project's shell alone
+   gives a flat green mask — its glass is fairly even. So the original face's tonal
+   field comes back: key light upper-left, brow ridge and sunken sockets, cheek
+   volume and shadow, nose bridge and base, lip relief, jaw falling away. It is built
+   as a grey relief map on a Gaussian field and composited with `overlay` (neutral
+   grey changes nothing, light sculpts out, dark cuts in), keyed to *this* anatomy's
+   parameters, so a slider moves the relief with the feature.
+3. **`compositeCells()` measures and rebuilds it.** The layer is downsampled to one
+   pixel per cell (`matPitch` cells across), each pixel read as luminance, mapped
+   through black/white point + exposure onto a six-stop palette ramp (hue/sat), then
+   drawn back as a grid where every cell is one flat tone made of three vertical
+   threads (`[0.52, 1.00, 0.68]`) and two sub-rows. Per-column gain and per-cell
+   dither give it the texture of cloth instead of noise.
+4. **The vector features go on top at full resolution** — eyes with iris, pupil and
+   catchlight, brows, nose, mouth. The cells give volume; the vectors give features.
+
+`Surface` in the panel switches between **Cells (Rynette)** and the original
+**Hologram** mode (wire/motes/circuit/matrix-glyph shell, projector rings, rim light),
+so nothing was deleted — the old look is one select away.
+
+Tuning knobs, in order of usefulness: **Relief** (`matSculpt`), **Exposure**,
+**Black point** / **White point** (these three set how much of the face lights up),
+**Cells across** (`matPitch` — 60 is coarse and chunky, 120 is nearly photographic),
+**Cell texture**, **Tone bands** (1 = smooth gradient per cell, 5 = posterised chunks).
+
 ### What is new in the merge
 
 `web/schema.json` grew a **Matrix (Rynette)** group:
 
 | param | what it does |
 |---|---|
-| `matThreads` | strength of the thread grid over the head |
+| `matPortrait` | Surface: Cells (Rynette) or the original Hologram |
+| `matSculpt` | relief: how hard the key light and the sockets sculpt the tone |
+| `matExposure`, `matBlack`, `matWhite` | tone mapping before quantisation |
+| `matThreads` | strength of the thread grid (hologram mode) |
 | `matPitch` | columns across the head width (24–180) |
 | `matGain` | how hard the gaps between threads cut |
 | `matLevels` | how many tonal steps each cell gets (1 = smooth) |

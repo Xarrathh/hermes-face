@@ -166,6 +166,9 @@ and the Hyprland autostart line and window rule are stripped back out.
 | page loads, nothing ever answers | `journalctl --user -u hermes-face -f` — usually no Hermes CLI or no model configured |
 | 409 `busy` on `/say` | a turn is still running; `POST /interrupt`, or wait for it |
 | silent replies, audio file zero bytes | `edge-tts` missing for the interpreter in the unit: `journalctl` shows `ModuleNotFoundError`, re-run `./install.sh` |
+| face looks flat / like a green mask | `matSculpt` at 0, or white point too low: the cells can only show relief that is in the tone map |
+| face is one bright blob | white point above the shell's own key light — raise `matWhite` or lower `matExposure` |
+| cells look like a smear | `matPitch` too high for the window size, or `matLevels` fighting the quantiser. 60–100 across is the sweet spot |
 | face reloads itself in a loop | expected after a code change (build id from mtimes); if constant, the install prefix is being rewritten under it |
 | every reply is "The agent did not return an answer" | the CLI changed: `hermes chat` has no `--format stream-json`. This fork runs `-Q` instead — the reply is on stdout, `session_id:` on stderr. Check with `journalctl --user -u hermes-face -n 30` |
 | the face forgets the last thing you said | turn ran without a session: pass `--resume <sid>` or `--continue hermes-face --create-if-missing` |

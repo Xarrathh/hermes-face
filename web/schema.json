@@ -560,39 +560,81 @@
     },
     {
       "id": "matrix",
-      "label": "Matrix (Rynette)",
+      "label": "Rynette",
       "params": [
         {
-          "key": "matThreads",
-          "label": "Threads",
-          "min": 0.0,
-          "max": 1.0,
-          "step": 0.01,
-          "default": 0.5
+          "key": "matPortrait",
+          "label": "Surface",
+          "kind": "select",
+          "options": [
+            "Cells (Rynette)",
+            "Hologram (original)"
+          ],
+          "default": 0
         },
         {
           "key": "matPitch",
-          "label": "Thread pitch",
+          "label": "Cells across",
           "min": 24,
           "max": 180,
           "step": 1,
-          "default": 84
+          "default": 90
         },
         {
-          "key": "matGain",
-          "label": "Thread texture",
+          "key": "matExposure",
+          "label": "Exposure",
+          "min": 0.4,
+          "max": 4.0,
+          "step": 0.05,
+          "default": 1.6
+        },
+        {
+          "key": "matBlack",
+          "label": "Black point",
           "min": 0.0,
-          "max": 1.0,
-          "step": 0.01,
-          "default": 0.7
+          "max": 0.45,
+          "step": 0.005,
+          "default": 0.03
+        },
+        {
+          "key": "matWhite",
+          "label": "White point",
+          "min": 0.1,
+          "max": 1.2,
+          "step": 0.005,
+          "default": 0.5
         },
         {
           "key": "matLevels",
-          "label": "Tone levels",
+          "label": "Tone bands",
           "min": 1,
           "max": 9,
           "step": 1,
-          "default": 5
+          "default": 1
+        },
+        {
+          "key": "matSculpt",
+          "label": "Relief",
+          "min": 0.0,
+          "max": 1.5,
+          "step": 0.01,
+          "default": 1.0
+        },
+        {
+          "key": "matGain",
+          "label": "Cell texture",
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.01,
+          "default": 0.8
+        },
+        {
+          "key": "matThreads",
+          "label": "Threads (holo)",
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.01,
+          "default": 0.6
         },
         {
           "key": "matRain",
@@ -914,29 +956,32 @@
       "hair": 0.35
     },
     "Rynette": {
-      "effect": 4,
-      "hue": 141,
-      "sat": 0.9,
-      "glow": 1.5,
-      "fill": 1.0,
-      "bgLevel": 0.5,
-      "matrixDensity": 1.35,
-      "matrixSpeed": 1.3,
-      "matrixTrail": 1.6,
-      "matThreads": 0.55,
-      "matPitch": 84,
-      "matGain": 0.72,
-      "matRain": 0.5,
-      "matRainSpeed": 1.1,
-      "matRainDensity": 1.1,
-      "matScan": 0.45,
+      "matPortrait": 0,
+      "matPitch": 90,
+      "matExposure": 1.7,
+      "matBlack": 0.03,
+      "matWhite": 0.48,
+      "matLevels": 1,
+      "matGain": 0.85,
+      "matRain": 0.45,
+      "matRainSpeed": 1.0,
+      "matRainDensity": 1.05,
+      "matScan": 0.4,
       "matVignette": 0.6,
-      "scan": 0.35,
-      "flicker": 0.3,
-      "hairStyle": 1,
-      "hair": 0.4,
-      "lashes": 0.5,
-      "transparency": 1.0
+      "hue": 141,
+      "sat": 0.88,
+      "glow": 1.3,
+      "effect": 4,
+      "scan": 0.0,
+      "bgLevel": 0.0,
+      "hairStyle": 0,
+      "hair": 0.0,
+      "lashes": 1.2,
+      "transparency": 1.0,
+      "faceShape": 0,
+      "eyeW": 0.46,
+      "eyeOpen": 1.25,
+      "irisSize": 1.15
     },
     "Matrix Threads": {
       "effect": 4,
