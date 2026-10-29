@@ -131,6 +131,26 @@ fight over workspace 1.
 See `INSTALL.md` for prerequisites, kiosk/appliance setups (including `cage`), remote
 displays, and troubleshooting. The installer is idempotent and keeps `config.json`.
 
+## One repo, several boxes
+
+Each box differs in three ways the code has to tolerate, so none of them belongs in
+shared tracked files:
+
+- **The look.** `config.json` is per box and git-ignored: whoever is tuning the face
+  owns it. A fresh install seeds from `config.example.json`; the installer never
+  overwrites an existing one. Same for `history.json` (conversation log) and `audio/`.
+- **The port.** `HERMES_FACE_PORT` (default 9120). The Chromium window class is derived
+  from the URL path, not the port, so the Hyprland rule keeps matching.
+- **The Hermes version.** Flags differ: 0.21 has `--query-file` and
+  `--create-if-missing`, 0.19 has neither and fails hard on an unknown argument.
+  `hermes_caps()` probes `hermes chat --help` once at startup and falls back to
+  `-q <prompt>` with resume-by-id, so one checkout runs on both.
+
+Workflow that has held up: one branch per box (`git checkout -b box-<name>`), pull
+`main` before touching the renderer, and keep box-specific tuning in `config.json`
+rather than in `web/schema.json` defaults. When a fix is worth having everywhere,
+cherry-pick it to `main` rather than re-doing it on each box.
+
 ## Run
 
 ```bash
