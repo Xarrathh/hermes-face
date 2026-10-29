@@ -413,22 +413,12 @@
   }
 
   function headPath() {
-    // No real face is mirrored, and a perfect mirror is the strongest "this is a mask"
-    // cue there is. Nothing here is a feature, so it costs nothing: the two sides differ
-    // by ~2% in width and ~0.6% in height, and the jaw drifts about 1% off centre.
-    const asym = clamp(P.asymmetry ?? 0.35, 0, 1);
-    const aR = 1 + 0.034 * asym, aL = 1 - 0.034 * asym;
-    const vL = 1 + 0.012 * asym;
     const ring = [];
-    for (const [u, v] of G.pts) {
-      const drift = 0.020 * asym * smoothstep(0.42, 1, v);
-      ring.push([ux(u * aR + drift), vy(v) + jawDrop(v)]);
-    }
+    for (const [u, v] of G.pts) ring.push([ux(u), vy(v) + jawDrop(v)]);
     for (let i = G.pts.length - 1; i >= 1; i--) {
       const [u, v] = G.pts[i];
       if (u === 0) continue;                       // a pointed crown must not duplicate
-      const drift = 0.020 * asym * smoothstep(0.42, 1, v);
-      ring.push([ux(-u * aL + drift), vy(v * vL) + jawDrop(v)]);
+      ring.push([ux(-u), vy(v) + jawDrop(v)]);
     }
     const n = ring.length;
     const p = new Path2D();
