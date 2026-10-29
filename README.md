@@ -69,9 +69,13 @@ Hair was removed outright at Pierre's request (the style select, hairline, hairl
 shape, darkness and part line, and the two draw passes): this face is bald by design,
 and the hairline band was adding a shadow the cells then measured.
 
-`Surface` in the panel switches between **Cells (Rynette)** and the original
-**Hologram** mode (wire/motes/circuit/matrix-glyph shell, projector rings, rim light),
-so nothing was deleted — the old look is one select away.
+**The hologram is gone.** The wire mesh, motes, circuit traces, glyph-matrix shell,
+scan band, projector rings, rim-light outline, the perspective room and the thread
+overlay were all deleted at Pierre's request, together with every parameter that only
+existed to drive them (`effect`, `glow`, `fill`, `scan`, `flicker`, `bgLevel`,
+`wireDensity`, `wireSweep`, `moteCount`, `moteSpeed`, `circuitDensity`,
+`electronSpeed`, `matrix*`). One surface, one way to draw it. `hue`/`sat` stayed and
+moved into the Rynette group: the ramp and the features are keyed to them.
 
 Tuning knobs, in order of usefulness: **Relief** (`matSculpt`), **Exposure**,
 **Black point** / **White point** (these three set how much of the face lights up),

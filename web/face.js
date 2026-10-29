@@ -106,11 +106,6 @@
     buildLayer();
     layout();
     rebuildGeometry();
-    buildMotes();
-    buildCircuit();
-    buildMatrix();
-    buildBgEffect();
-    buildThreads(true);
     buildRain();
   }
 
@@ -363,14 +358,6 @@
     look.brow = approach(look.brow, S.state === 'listening' ? 1 : S.state === 'thinking' ? 0.45 : 0, 6, dt);
     look.speed = S.state === 'thinking' ? 2.1 : S.state === 'listening' ? 0.7 : 1;
 
-    // hologram flicker
-    S.nextFlick -= dt;
-    if (S.nextFlick <= 0) {
-      S.nextFlick = rnd(1.2, 5.5);
-      S.flick = rnd(0.86, 1.0);
-    } else {
-      S.flick = approach(S.flick, 1, 9, dt);
-    }
   }
 
   /* ---------------------------------------------------------------- head path */
@@ -405,364 +392,7 @@
     return p;
   }
 
-  /* ---------------------------------------------------------------- circuit */
-  // A board etched into the face: orthogonal and 45-degree traces inside the silhouette,
-  // pads at the bends, and electrons running along the copper.
-  const CIRCUIT = { traces: [], ready: false, glow: null };
-
-  function buildCircuit() {
-    CIRCUIT.traces = [];
-    const geo = headPath();
-    const scratch = document.createElement('canvas').getContext('2d');
-    const inside = (x, y) => scratch.isPointInPath(geo, x, y);
-    const dirs = [[0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1]];
-    const density = clamp(P.circuitDensity ?? 1, 0.2, 2.5);
-    const want = Math.round(34 * density);
-    let guard = 0;
-
-    while (CIRCUIT.traces.length < want && guard++ < want * 20) {
-      const u0 = rnd(-0.72, 0.72), v0 = rnd(0.10, 0.90);
-      if (!inside(ux(u0), vy(v0))) continue;
-      const pts = [[ux(u0), vy(v0)]];
-      let dir = Math.floor(Math.random() * 8);
-      const segs = 3 + Math.floor(Math.random() * 5);
-      for (let i = 0; i < segs; i++) {
-        const step = rnd(0.09, 0.22);
-        const [, ] = dirs[dir];
-        const nx = pts[pts.length - 1][0] + dU(dirs[dir][0] * step);
-        const ny = pts[pts.length - 1][1] + dV(dirs[dir][1] * step * 0.85);
-        if (!inside(nx, ny)) break;
-        pts.push([nx, ny]);
-        if (Math.random() < 0.32) dir = (dir + (Math.random() < 0.5 ? 1 : 7)) % 8;
-      }
-      if (pts.length < 3) continue;
-
-      let len = 0;
-      const acc = [0];
-      for (let i = 1; i < pts.length; i++) {
-        len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
-        acc.push(len);
-      }
-      const nEl = Math.random() < 0.75 ? 1 : 2;
-      const electrons = [];
-      for (let k = 0; k < nEl; k++) electrons.push({ s0: rnd(0, len), v: rnd(0.55, 1.35) });
-      CIRCUIT.traces.push({ pts, acc, len, electrons });
-    }
-
-    // a soft sprite for the electrons, built once per palette
-    const g = document.createElement('canvas');
-    g.width = g.height = 64;
-    const gc = g.getContext('2d');
-    const rg = gc.createRadialGradient(32, 32, 1, 32, 32, 32);
-    rg.addColorStop(0, rgba(COL.core, 1));
-    rg.addColorStop(0.25, rgba(COL.main, 0.85));
-    rg.addColorStop(1, rgba(COL.main, 0));
-    gc.fillStyle = rg;
-    gc.fillRect(0, 0, 64, 64);
-    CIRCUIT.glow = g;
-    CIRCUIT.ready = true;
-  }
-
-  function pointAt(trace, s) {
-    const { pts, acc } = trace;
-    let i = 1;
-    while (i < acc.length - 1 && acc[i] < s) i++;
-    const span = acc[i] - acc[i - 1] || 1;
-    const k = clamp((s - acc[i - 1]) / span, 0, 1);
-    return [pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * k,
-            pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * k];
-  }
-
-  function drawCircuit(hp, t) {
-    if (!CIRCUIT.ready) buildCircuit();
-    const glow = P.glow ?? 1;
-    const speed = P.electronSpeed ?? 1;
-    ctx.save();
-    ctx.clip(hp);
-
-    // traces
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    for (const tr of CIRCUIT.traces) {
-      ctx.strokeStyle = rgba(COL.main, 0.16 * glow);
-      ctx.lineWidth = 1.1;
-      ctx.beginPath();
-      ctx.moveTo(tr.pts[0][0], tr.pts[0][1]);
-      for (let i = 1; i < tr.pts.length; i++) ctx.lineTo(tr.pts[i][0], tr.pts[i][1]);
-      ctx.stroke();
-      // pads at the bends
-      ctx.fillStyle = rgba(COL.main, 0.22 * glow);
-      for (const [x, y] of tr.pts) {
-        ctx.beginPath();
-        ctx.arc(x, y, 1.6, 0, TAU);
-        ctx.fill();
-      }
-    }
-
-    // electrons
-    for (const tr of CIRCUIT.traces) {
-      for (const e of tr.electrons) {
-        const sHead = (e.s0 + e.v * speed * 90 * t) % tr.len;
-        for (let k = 3; k >= 0; k--) {
-          const s2 = sHead - k * 3.2;
-          if (s2 < 0) continue;
-          const [x, y] = pointAt(tr, s2);
-          const r = k === 0 ? 5.5 : 4 - k * 0.6;
-          ctx.globalAlpha = k === 0 ? 0.95 : 0.30 * (1 - k / 4);
-          ctx.drawImage(CIRCUIT.glow, x - r, y - r, r * 2, r * 2);
-        }
-      }
-    }
-    ctx.globalAlpha = 1;
-    ctx.restore();
-  }
-
-  /* ---------------------------------------------------------------- face effects */
-  // Effect 0 is the code rain (drawn below); 1 is the old latitude/longitude shell,
-  // 2 is drifting motes, 3 is bare glass.
-  const MOTES = { list: [], ready: false };
-
-  function buildMotes() {
-    MOTES.list = [];
-    const n = 160;
-    for (let i = 0; i < n; i++) {
-      MOTES.list.push({
-        u: rnd(-0.95, 0.95), v: rnd(0.04, 0.98),
-        r: rnd(0.6, 2.1), sp: rnd(0.010, 0.045), ph: rnd(0, TAU),
-      });
-    }
-    MOTES.ready = true;
-  }
-
-  function drawWire(hp, t) {
-    const glow = P.glow ?? 1;
-    ctx.save();
-    ctx.clip(hp);
-    ctx.globalCompositeOperation = 'lighter';
-    const wd = clamp(P.wireDensity ?? 1, 0.3, 2.2);
-    const lat = Math.round(18 * wd);
-    for (let i = 1; i < lat; i++) {
-      const v = i / lat;
-      const hw = halfWidth(v) * 0.985;
-      const sag = dV(0.012) * (0.4 + 0.6 * Math.sin(Math.PI * v));
-      const g = ctx.createLinearGradient(ux(-hw), 0, ux(hw), 0);
-      g.addColorStop(0, rgba(COL.main, 0.02));
-      g.addColorStop(0.14, rgba(COL.main, 0.16 * glow));
-      g.addColorStop(0.5, rgba(COL.main, 0.06 * glow));
-      g.addColorStop(0.86, rgba(COL.main, 0.16 * glow));
-      g.addColorStop(1, rgba(COL.main, 0.02));
-      ctx.strokeStyle = g;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(ux(-hw), vy(v));
-      ctx.quadraticCurveTo(ux(0), vy(v) + sag, ux(hw), vy(v));
-      ctx.stroke();
-    }
-    const merid = Math.max(3, Math.round(7 * wd));
-    for (let j = 1; j <= merid; j++) {
-      const u0 = Math.cos(Math.PI * j / (merid + 1));
-      ctx.beginPath();
-      for (let i = 0; i <= 44; i++) {
-        const v = i / 44;
-        const x = ux(u0 * halfWidth(v));
-        const y = vy(v);
-        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-      }
-      ctx.strokeStyle = rgba(COL.main, 0.07 * glow);
-      ctx.lineWidth = 1;
-      ctx.stroke();
-    }
-    // a slow scan band, so a static shell still has life
-    const k = (t * 0.06 * clamp(P.wireSweep ?? 1, 0.2, 3)) % 1;
-    const y = vy(0.02 + k * 0.96);
-    const sg = ctx.createLinearGradient(0, y - dV(0.05), 0, y + dV(0.02));
-    sg.addColorStop(0, rgba(COL.main, 0));
-    sg.addColorStop(0.8, rgba(COL.core, 0.18));
-    sg.addColorStop(1, rgba(COL.main, 0));
-    ctx.fillStyle = sg;
-    ctx.fillRect(ux(-1.05), y - dV(0.05), dU(2.1), dV(0.07));
-    ctx.restore();
-  }
-
-  function drawMotes(hp, t) {
-    if (!MOTES.ready) buildMotes();
-    const amt = Math.min(1.4, 0.6 + (P.glow ?? 1) * 0.4);
-    const count = Math.min(MOTES.list.length, Math.round(MOTES.list.length * clamp(P.moteCount ?? 1, 0.1, 2)));
-    const mSpeed = clamp(P.moteSpeed ?? 1, 0.2, 3);
-    ctx.save();
-    ctx.clip(hp);
-    ctx.globalCompositeOperation = 'lighter';
-    for (let i = 0; i < count; i++) {
-      const m = MOTES.list[i];
-      const v = 0.98 - (((0.98 - m.v) + t * m.sp * mSpeed) % 0.96);   // drifts upward
-      const hw = halfWidth(v) * 0.94;
-      const x = ux(m.u * hw);
-      const y = vy(v);
-      const a = (0.25 + 0.35 * (0.5 + 0.5 * Math.sin(t * 1.7 + m.ph))) * amt;
-      ctx.fillStyle = rgba(COL.main, a);
-      ctx.beginPath();
-      ctx.arc(x, y, m.r, 0, TAU);
-      ctx.fill();
-    }
-    ctx.restore();
-  }
-
   /* ---------------------------------------------------------------- backdrop */
-
-  /* ------------------------------------------------------------- background */
-  // The backdrop mirrors whichever shell effect is selected: same idiom, viewport
-  // scale, dimmed by `bgLevel`. It is drawn BEFORE the head, and the shell is opaque,
-  // so the part that falls behind the face is hidden for free — the background never
-  // needs to know where the head is, and none of it can leak into the face.
-  const BG = {
-    motes: [], traces: [], cols: [], cv: null, c: null, last: -1, ready: false,
-    w: 0, h: 0, ch: 26, cw: 16, CHARS: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ<>[]{}/\\|=+-*:.',
-  };
-
-  function buildBgEffect() {
-    BG.motes = [];
-    const n = Math.round(44 * clamp(P.moteCount ?? 1, 0.2, 2));
-    for (let i = 0; i < n; i++) {
-      BG.motes.push({ x: Math.random(), y: Math.random(), r: 0.7 + 1.5 * Math.random(),
-                      sp: 0.004 + 0.016 * Math.random(), ph: Math.random() * TAU });
-    }
-
-    // board traces: a coarse orthogonal/45° walk across the viewport. No head test —
-    // the opaque shell hides whatever passes behind it.
-    BG.traces = [];
-    const dirs = [[0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1]];
-    const step = VH * 0.052;
-    const want = Math.round(18 * clamp(P.circuitDensity ?? 1, 0.3, 2.5));
-    for (let i = 0; i < want; i++) {
-      let x = Math.random() * VW, y = Math.random() * VH;
-      let d = Math.floor(Math.random() * 8);
-      const pts = [[x, y]];
-      const legs = 6 + Math.floor(Math.random() * 6);
-      for (let k = 0; k < legs; k++) {
-        if (Math.random() < 0.45) d = (d + (Math.random() < 0.5 ? 1 : 7)) % 8;
-        const nx = x + dirs[d][0] * step, ny = y + dirs[d][1] * step;
-        if (nx < -step || nx > VW + step || ny < -step || ny > VH + step) break;
-        x = nx; y = ny; pts.push([x, y]);
-      }
-      if (pts.length > 1) BG.traces.push({ pts, ph: Math.random(), sp: 0.15 + 0.35 * Math.random() });
-    }
-
-    const ch = Math.max(14, VH * 0.030);
-    const cw = ch * 0.62;
-    const cv = BG.cv || document.createElement('canvas');
-    const dpr = DPR || 1;
-    cv.width = Math.round(VW * dpr); cv.height = Math.round(VH * dpr);
-    const c = cv.getContext('2d');
-    c.setTransform(dpr, 0, 0, dpr, 0, 0);
-    Object.assign(BG, { cv, c, ch, cw, w: VW, h: VH, ready: true, last: -1 });
-    BG.cols = [];
-    const nc = Math.max(1, Math.floor(VW / cw));
-    for (let i = 0; i < nc; i++) {
-      const h1 = hash01(i * 4.31), h2 = hash01(i * 9.17 + 7.3), h3 = hash01(i * 2.77 + 19.1);
-      BG.cols.push({ x: i * cw, seed: h1, speed: 0.35 + 0.8 * h2, len: 4 + Math.round(14 * h3) });
-    }
-  }
-
-  function drawBgEffect(t) {
-    const level = clamp(P.bgLevel ?? 0.35, 0, 1);
-    if (level < 0.01 || OFF.has('bg')) return;
-    const effect = clamp(Math.round(P.effect ?? 0), 0, 4);
-    if (effect === 2) return;                       // clean glass: nothing in the background either
-    if (!BG.ready) buildBgEffect();
-    const glow = P.glow ?? 1;
-    const cx = HEAD.cx, cy = vy(0.55);
-
-    ctx.save();
-    if (effect === 0) {
-      // wireframe room: a receding perspective floor rather than a dome around the head.
-      // Concentric rings at screen scale read as horizontal bands; a grid with a horizon
-      // reads as a room the head is standing in, which is what "the background is the
-      // same effect" has to mean once the effect is a mesh.
-      const horizon = VH * 0.72;
-      ctx.strokeStyle = rgba(COL.main, 0.13 * level * glow);
-      ctx.lineWidth = 1;
-      const cols = 26;
-      for (let k = -cols; k <= cols; k++) {          // verticals fanning toward the horizon
-        ctx.beginPath();
-        ctx.moveTo(VW * 0.5 + k * (VW * 0.012), horizon);
-        ctx.lineTo(VW * 0.5 + k * (VW * 0.115), VH);
-        ctx.stroke();
-      }
-      const scroll = (t * 0.22) % 1;                 // rows crawl toward the viewer
-      for (let i = 0; i <= 22; i++) {
-        const q = ((i + scroll) / 22);
-        const y = horizon + Math.pow(q, 2.35) * (VH - horizon);
-        ctx.globalAlpha = clamp(1 - q * 0.85, 0.15, 1);
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(VW, y);
-        ctx.stroke();
-      }
-      ctx.globalAlpha = 1;
-      ctx.globalCompositeOperation = 'lighter';
-      const hz = ctx.createLinearGradient(0, horizon - VH * 0.06, 0, horizon + VH * 0.02);
-      hz.addColorStop(0, rgba(COL.main, 0));
-      hz.addColorStop(1, rgba(COL.core, 0.10 * level * glow));
-      ctx.fillStyle = hz;
-      ctx.fillRect(0, horizon - VH * 0.06, VW, VH * 0.08);
-    } else if (effect === 1) {
-      // particles: the same motes, spread over the room
-      ctx.globalCompositeOperation = 'lighter';
-      for (const m of BG.motes) {
-        const y = ((m.y - t * m.sp) % 1 + 1) % 1;
-        const a = (0.18 + 0.22 * Math.abs(Math.sin(t * 0.9 + m.ph))) * level * glow;
-        ctx.fillStyle = rgba(COL.main, a);
-        ctx.fillRect(m.x * VW, y * VH, m.r, m.r);
-      }
-    } else if (effect === 3) {
-      // circuit: the same board idiom, drawn as a backplane behind the face
-      ctx.strokeStyle = rgba(COL.main, 0.12 * level * glow);
-      ctx.lineWidth = 1;
-      for (const tr of BG.traces) {
-        ctx.beginPath();
-        ctx.moveTo(tr.pts[0][0], tr.pts[0][1]);
-        for (let i = 1; i < tr.pts.length; i++) ctx.lineTo(tr.pts[i][0], tr.pts[i][1]);
-        ctx.stroke();
-      }
-      ctx.globalCompositeOperation = 'lighter';
-      for (const tr of BG.traces) {
-        const segs = tr.pts.length - 1;
-        const s = ((t * tr.sp * 0.25 + tr.ph) % 1) * segs;
-        const i = Math.min(segs - 1, Math.floor(s)), f = s - i;
-        const x = lerp(tr.pts[i][0], tr.pts[i + 1][0], f), y = lerp(tr.pts[i][1], tr.pts[i + 1][1], f);
-        const eg = ctx.createRadialGradient(x, y, 0, x, y, 4 * (1 + level));
-        eg.addColorStop(0, rgba(COL.core, 0.34 * level * glow));
-        eg.addColorStop(1, rgba(COL.main, 0));
-        ctx.fillStyle = eg;
-        ctx.fillRect(x - 5 * (1 + level), y - 5 * (1 + level), 10 * (1 + level), 10 * (1 + level));
-      }
-    } else if (effect === 4) {
-      // matrix: the glyph rain fills the room, the face occludes its own part of it
-      if (BG.last < 0 || t - BG.last >= 1 / 12) {
-        BG.last = t;
-        const c = BG.c;
-        c.clearRect(0, 0, BG.w, BG.h);
-        c.font = `${Math.round(BG.ch * 0.94)}px "JetBrainsMono Nerd Font", "DejaVu Sans Mono", monospace`;
-        c.textBaseline = 'top';
-        const frame = Math.floor(t * 10);
-        for (const col of BG.cols) {
-          const span = BG.h + (col.len + 1) * BG.ch;
-          const head = ((col.seed * span) + t * col.speed * BG.ch * 6) % span - col.len * BG.ch;
-          for (let k = 0; k <= col.len; k++) {
-            const y = head - k * BG.ch;
-            if (y < -BG.ch || y > BG.h) continue;
-            const gi = Math.floor(hash01(col.x * 0.61 + k * 11.3 + (frame % 41) * 77.7) * BG.CHARS.length);
-            const a = (k === 0 ? 0.55 : 0.34 * Math.pow(1 - k / (col.len + 1), 1.7)) * level;
-            c.fillStyle = rgba(k === 0 ? COL.core : COL.main, a);
-            c.fillText(BG.CHARS[gi], col.x, y);
-          }
-        }
-      }
-      ctx.drawImage(BG.cv, 0, 0, BG.w, BG.h);
-    }
-    ctx.restore();
-  }
 
   function drawBackdrop(t) {
     const bg = ctx.createRadialGradient(VW * 0.5, VH * 0.42, 0, VW * 0.5, VH * 0.52, Math.max(VW, VH) * 0.78);
@@ -771,45 +401,6 @@
     bg.addColorStop(1, 'rgb(1,4,6)');
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, VW, VH);
-
-
-
-    // horizon glow, so the head has a floor to stand on
-    const horizon = VH * 0.80;
-    ctx.save();
-    ctx.globalCompositeOperation = 'lighter';
-    const hg = ctx.createLinearGradient(0, horizon - VH * 0.05, 0, horizon + VH * 0.10);
-    hg.addColorStop(0, rgba(COL.main, 0));
-    hg.addColorStop(0.5, rgba(COL.main, 0.06));
-    hg.addColorStop(1, rgba(COL.main, 0));
-    ctx.fillStyle = hg;
-    ctx.fillRect(0, horizon - VH * 0.05, VW, VH * 0.15);
-    ctx.restore();
-  }
-
-  /* ---------------------------------------------------------------- projector */
-  function drawProjector(t) {
-    const baseY = vy(1.16);
-    ctx.save();
-    ctx.globalCompositeOperation = 'lighter';
-    for (let i = 0; i < 3; i++) {
-      const k = (t * 0.22 + i / 3) % 1;
-      const rx = dU(0.62) * (0.7 + k * 0.5);
-      const ry = dV(0.055) * (0.7 + k * 0.5);
-      ctx.strokeStyle = rgba(COL.main, 0.20 * (1 - k) * (0.5 + 0.5 * (P.glow ?? 1)));
-      ctx.lineWidth = 1.4;
-      ctx.beginPath();
-      ctx.ellipse(HEAD.cx, baseY, rx, ry, 0, 0, TAU);
-      ctx.stroke();
-    }
-    const ug = ctx.createRadialGradient(HEAD.cx, baseY, 0, HEAD.cx, baseY, dU(0.9));
-    ug.addColorStop(0, rgba(COL.main, 0.16));
-    ug.addColorStop(1, rgba(COL.main, 0));
-    ctx.fillStyle = ug;
-    ctx.beginPath();
-    ctx.ellipse(HEAD.cx, baseY, dU(0.9), dV(0.14), 0, 0, TAU);
-    ctx.fill();
-    ctx.restore();
   }
 
   /* ---------------------------------------------------------------- ears */
@@ -871,174 +462,14 @@
     }
   }
 
-  /* ---------------------------------------------------------------- shell */
-
-  const hash01 = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
-
-  /* ---------------------------------------------------------------- matrix */
-  // Glyph rain, rebuilt on the rules the first attempt earned: the shell above is dark and
-  // OPAQUE (a translucent one turns the face into a window onto the room's glyphs), one
-  // glyph per cell so a trail is characters and not a smear, and a single capped additive
-  // pass. Drawn into an offscreen canvas at 12 Hz and blitted: drawing every cell every
-  // frame at 60 Hz halves the frame rate.
-  const MATRIX = {
-    cv: null, c: null, cols: [], x0: 0, y0: 0, w: 0, h: 0, ch: 16, cw: 10, last: -1, ready: false,
-    CHARS: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ<>[]{}/\\|=+-*:.',
-  };
-
-  function buildMatrix() {
-    const dpr = DPR || 1;
-    const ch = Math.max(8, dV(0.030) / clamp(P.matrixDensity ?? 1, 0.4, 2.2));
-    const cw = ch * 0.60;
-    const x0 = ux(-1.14), y0 = vy(-0.13);
-    const w = dU(2.32), h = dV(1.38);
-    const cv = MATRIX.cv || document.createElement('canvas');
-    cv.width = Math.max(1, Math.round(w * dpr));
-    cv.height = Math.max(1, Math.round(h * dpr));
-    const c = cv.getContext('2d');
-    c.setTransform(dpr, 0, 0, dpr, 0, 0);
-    Object.assign(MATRIX, { cv, c, x0, y0, w, h, ch, cw, ready: true, last: -1 });
-    const n = Math.max(1, Math.floor(w / cw));
-    MATRIX.cols = [];
-    for (let i = 0; i < n; i++) {
-      const h1 = hash01(i * 7.13), h2 = hash01(i * 3.71 + 11.7), h3 = hash01(i * 5.19 + 29.3);
-      MATRIX.cols.push({ x: i * cw, seed: h1, speed: 0.5 + 1.0 * h2, len: 5 + Math.round(18 * h3) });
-    }
-  }
-
-  function drawMatrix(hp, t) {
-    if (!MATRIX.ready) buildMatrix();
-    const trail = clamp(P.matrixTrail ?? 1, 0.2, 2.5);
-    const glow = P.glow ?? 1;
-    if (MATRIX.last < 0 || t - MATRIX.last >= 1 / 12) {
-      MATRIX.last = t;
-      const c = MATRIX.c;
-      c.clearRect(0, 0, MATRIX.w, MATRIX.h);
-      c.font = `${Math.round(MATRIX.ch * 0.94)}px "JetBrainsMono Nerd Font", "DejaVu Sans Mono", monospace`;
-      c.textBaseline = 'top';
-      const frame = Math.floor(t * 10);          // glyphs step at 10 Hz, columns at 12
-      for (const col of MATRIX.cols) {
-        const len = Math.round(col.len * trail);
-        const span = MATRIX.h + (len + 1) * MATRIX.ch;
-        const head = ((col.seed * span) + t * col.speed * MATRIX.ch * 7) % span - len * MATRIX.ch;
-        for (let k = 0; k <= len; k++) {
-          const y = head - k * MATRIX.ch;
-          if (y < -MATRIX.ch || y > MATRIX.h) continue;
-          const gi = Math.floor(hash01(col.x * 0.73 + k * 13.77 + (frame % 41) * 91.31) * MATRIX.CHARS.length);
-          const a = k === 0 ? 1 : Math.pow(1 - k / (len + 1), 1.7);
-          c.fillStyle = k === 0 ? rgba(COL.core, 0.95) : rgba(COL.main, 0.62 * a);
-          c.fillText(MATRIX.CHARS[gi], col.x, y);
-        }
-      }
-    }
-    ctx.drawImage(MATRIX.cv, MATRIX.x0, MATRIX.y0, MATRIX.w, MATRIX.h);
-    // glow pass, capped: the shell behind is opaque, so this stays additive on top of text
-    ctx.save();
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.globalAlpha = 0.30 * glow;
-    ctx.drawImage(MATRIX.cv, MATRIX.x0, MATRIX.y0, MATRIX.w, MATRIX.h);
-    ctx.restore();
-  }
-
-  /* ------------------------------------------------------------- matrix pass */
-  // Carried over from the first Rynette face, and the reason it read as a
-  // hologram instead of smooth glass: the head is a grid of cells and each cell
-  // is a fine vertical thread. Three sub-columns per cell with fixed gains
-  // [0.52, 1.00, 0.68] produce the striation -- one flat column per cell reads
-  // as a barcode instead. Per-column and per-row gains are what stop it looking
-  // like a blurred photo on a mesh.
-  //
-  // The texture does not move with time, so it is built once per resize/pitch
-  // and blitted twice a frame: multiply to cut the gaps between threads,
-  // lighter at low alpha for the thread glow. Drawing it cell by cell per frame
-  // (84 x 112 fillRects at 40 fps) is measurable; this is not.
-  const THREAD = { cv: null, ready: false, key: '' };
-  const SUB_GAIN = [0.52, 1.00, 0.68];
-
-  function buildThreads(force) {
-    const cols = clamp(Math.round(P.matPitch ?? 84), 20, 200);
-    const cell = Math.max(3, Math.round(dU(2.04) / cols));
-    const rowH = Math.max(3, Math.round(cell * 1.35));
-    const x0 = Math.round(ux(-1.02));
-    const y0 = Math.round(vy(-0.06));
-    const w = Math.max(8, Math.round(dU(2.04)));
-    const h = Math.max(8, Math.round(dV(1.20)));
-    const key = `${cols}|${cell}|${rowH}|${x0}|${y0}|${w}|${h}`;
-    if (!force && THREAD.ready && THREAD.key === key) return;
-    THREAD.key = key;
-
-    const cv = THREAD.cv || document.createElement('canvas');
-    cv.width = w; cv.height = h;
-    const c = cv.getContext('2d', { willReadFrequently: true });
-    const img = c.createImageData(w, h);
-    const data = img.data;
-    const gain = clamp(P.matGain ?? 0.7, 0, 1);
-
-    // Tonal quantisation is the other half of the old face's look: each cell gets one
-    // of a few fixed levels rather than a continuous gain, which is what stops the
-    // grid reading as a blur and makes it read as a quantised portrait. Levels follow
-    // a ramp (near-black -> hot), so a column is a tonal chunk, not a brightness value.
-    const steps = clamp(Math.round(P.matLevels ?? 5), 1, 9);
-    const RAMP = [];
-    for (let i = 0; i < steps; i++) {
-      RAMP.push(steps === 1 ? 1 : 0.52 + 0.48 * (i / (steps - 1)));
-    }
-    const pick = (h01) => RAMP[Math.min(steps - 1, Math.floor(h01 * steps))];
-
-    const colVar = new Float32Array(w);
-    for (let x = 0; x < w; x++) {
-      const ci = Math.floor(x / cell);
-      const sub = x - ci * cell;
-      const k = Math.min(2, Math.floor((sub / cell) * 3));
-      const thread = 0.45 + 0.55 * SUB_GAIN[k];            // 0.736 .. 1.0
-      const base = 1 - gain * (1 - thread) * 0.92;         // gap cut
-      const tone = pick(hash01(ci * 12.9898 + 78.233));
-      colVar[x] = clamp(base * (0.42 + 0.58 * tone), 0.2, 1);
-    }
-    const rows = Math.ceil(h / rowH);
-    const rowVar = new Float32Array(rows);
-    for (let r = 0; r < rows; r++) {
-      rowVar[r] = 1 - 0.13 * gain * (1 - pick(hash01(r * 3.71 + 5.3)));
-    }
-    const rowCut = 1 - 0.16 * gain;                        // the line between two rows
-
-    for (let y = 0; y < h; y++) {
-      const r = Math.floor(y / rowH);
-      const onCut = (y % rowH) === rowH - 1;
-      const rv = rowVar[r] * (onCut ? rowCut : 1);
-      const row = y * w;
-      for (let x = 0; x < w; x++) {
-        const v = (colVar[x] * rv * 255) | 0;
-        const i = (row + x) * 4;
-        data[i] = v; data[i + 1] = v; data[i + 2] = v; data[i + 3] = 255;
-      }
-    }
-    c.putImageData(img, 0, 0);
-    Object.assign(THREAD, { cv, x0, y0, w, h, ready: true });
-  }
-
-  function drawThreads(t) {
-    const amt = clamp(P.matThreads ?? 0, 0, 1);
-    if (amt < 0.01 || OFF.has('threads')) return;
-    buildThreads(false);
-    ctx.save();
-    ctx.globalCompositeOperation = 'multiply';
-    ctx.globalAlpha = amt;
-    ctx.drawImage(THREAD.cv, THREAD.x0, THREAD.y0, THREAD.w, THREAD.h);
-    // A flat additive pass here lifts the whole head by a constant and flattens the
-    // key light into mush: the threads must darken the gaps, not brighten the face.
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.globalAlpha = 0.025 * amt * (P.glow ?? 1);
-    ctx.drawImage(THREAD.cv, THREAD.x0, THREAD.y0, THREAD.w, THREAD.h);
-    ctx.restore();
-  }
-
   /* --------------------------------------------------------------- front rain */
   // The other half of the old face: glyph rain that falls over the whole frame
   // but never over the portrait. Here it is drawn in front of the room and
   // clipped away from the head with an even-odd path, so the rain passes behind
   // nothing -- it is in the air in front of the face, not on the wall behind it.
   const RAIN = { cv: null, c: null, w: 0, h: 0, ch: 14, cw: 9, cols: [], last: -1, ready: false };
+  // its own glyph set: the rain borrowed the room effect's charset, and the room is gone
+  const RAIN_CHARS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ<>[]{}/\\|=+-*:.';
 
   function buildRain() {
     const ch = Math.max(9, (VH * 0.026) / clamp(P.matRainDensity ?? 1, 0.4, 2.4));
@@ -1080,10 +511,10 @@
         for (let k = 0; k <= col.len; k++) {
           const y = head - k * RAIN.ch;
           if (y < -RAIN.ch || y > RAIN.h) continue;
-          const gi = Math.floor(hash01(col.x * 0.77 + k * 17.1 + (frame % 37) * 61.9) * BG.CHARS.length);
+          const gi = Math.floor(hash01(col.x * 0.77 + k * 17.1 + (frame % 37) * 61.9) * RAIN_CHARS.length);
           const a = k === 0 ? 1 : Math.pow(1 - k / (col.len + 1), 1.9);
           c.fillStyle = k === 0 ? rgba(COL.core, 0.95) : rgba(COL.main, 0.72 * a);
-          c.fillText(BG.CHARS[gi], col.x, y);
+          c.fillText(RAIN_CHARS[gi], col.x, y);
         }
       }
     }
@@ -1100,6 +531,14 @@
     ctx.drawImage(RAIN.cv, 0, 0, RAIN.w, RAIN.h);
     ctx.restore();
   }
+
+  /* ---------------------------------------------------------------- helpers */
+  // These two lived inside the hologram passes that were just deleted, and every cell
+  // path needs them: hash01 for the deterministic per-column/row gain, SUB_GAIN for
+  // the three-thread profile. Without them resize() threw and the frame loop never
+  // started -- a black canvas with no error on screen.
+  const hash01 = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+  const SUB_GAIN = [0.52, 1.00, 0.68];         // left, middle, right sub-pixel of a cell
 
   /* ------------------------------------------------------------ sculpt field */
   // The measurement in compositeCells() can only see what the anatomy drew, and this
@@ -1256,7 +695,6 @@
   const LAYER = { cv: null, c: null };
   const CELLS = { cv: null, c: null, sm: null, smc: null, img: null, colGain: null, cols: 0, rows: 0 };
   const SUBX = 3, SUBY = 2;                  // sub-pixels per cell: the thread profile
-  let PORTRAIT = true;
 
   function rampStops(h, s) {
     // near-black teal -> deep -> matrix green -> hot -> white. Same six-stop shape as
@@ -1366,165 +804,15 @@
     ctx.restore();
   }
 
-  function drawShell(t, hp) {
-    const cx = ux(0);
-    const glow = P.glow ?? 1;
-    const fill = P.fill ?? 0.86;
-
+  /* ---------------------------------------------------------------- shell */
+  // There is no hologram any more, so the head has no shell to light: this fills one
+  // flat base inside the silhouette and the sculpt field supplies every tone.
+  function drawCellBase(hp) {
     ctx.save();
     ctx.clip(hp);
-
-    if (PORTRAIT) {
-      // Cell mode draws ONE flat base and nothing else. Every wash, key light and
-      // shadow here is an effect of the hologram, and each of them tints the
-      // measurement, so the cells stop being the face's tone and become the shell's.
-      // The base is mid-dark grey on purpose: 'overlay' sculpts up from a mid tone,
-      // and over near-black the relief collapses.
-      ctx.fillStyle = '#484848';
-      ctx.fillRect(ux(-1.15), vy(-0.15), dU(2.3), dV(1.4));
-      ctx.restore();
-      return;
-    }
-
-    // dark glass body: the head occludes the room behind it
-    const bg = ctx.createRadialGradient(cx - dU(0.16), vy(0.34), dU(0.03), cx, vy(0.52), dU(1.15));
-    // dark but opaque: the head must occlude the room, or the rain shows through it and
-    // the face reads as a ghost standing in front of the code
-    bg.addColorStop(0, 'rgba(7,26,34,1)');
-    bg.addColorStop(0.45, 'rgba(5,18,24,1)');
-    bg.addColorStop(0.82, 'rgba(3,11,15,1)');
-    bg.addColorStop(1, 'rgba(2,8,11,1)');
-    ctx.fillStyle = bg;
-    ctx.fillRect(ux(-1.1), vy(-0.1), dU(2.2), dV(1.2));
-
-    // interior light wash
-    const wash = ctx.createLinearGradient(ux(-0.9), vy(0.05), ux(0.9), vy(0.9));
-    wash.addColorStop(0, rgba(COL.main, 0.10 * glow));
-    wash.addColorStop(0.5, rgba(COL.main, 0.02));
-    wash.addColorStop(1, rgba(COL.main, 0));
-    ctx.fillStyle = wash;
-    ctx.fillRect(ux(-1.1), vy(-0.1), dU(2.2), dV(1.2));
-
-    /* planes: volume, then key light, then the shadow side */
-    // top-down falloff: the crown catches light, the jaw falls into shadow
-    const topLight = ctx.createLinearGradient(0, vy(0.02), 0, vy(0.95));
-    topLight.addColorStop(0, 'rgba(120,220,240,0.10)');
-    topLight.addColorStop(0.35, 'rgba(60,160,180,0.04)');
-    topLight.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = topLight;
-    ctx.fillRect(ux(-1.1), vy(-0.05), dU(2.2), dV(1.1));
-
-    // cheekbone shadows and jaw shelf: what makes a face read as a volume
-    for (const sgn of [-1, 1]) {
-      const cb = ctx.createRadialGradient(ux(sgn * 0.62), vy(0.585), 1, ux(sgn * 0.62), vy(0.585), dU(0.34));
-      cb.addColorStop(0, 'rgba(0,4,7,0.30)');
-      cb.addColorStop(1, 'rgba(0,4,7,0)');
-      ctx.fillStyle = cb;
-      ctx.fillRect(ux(sgn * 0.62 - 0.34), vy(0.44), dU(0.68), dV(0.30));
-    }
-    const jawShadow = ctx.createLinearGradient(0, vy(0.66), 0, vy(0.99));
-    jawShadow.addColorStop(0, 'rgba(0,4,7,0)');
-    jawShadow.addColorStop(0.55, 'rgba(0,4,7,0.16)');
-    jawShadow.addColorStop(1, 'rgba(0,4,7,0.38)');
-    ctx.fillStyle = jawShadow;
-    ctx.fillRect(ux(-1), vy(0.62), dU(2), dV(0.40));
-
-    ctx.globalCompositeOperation = 'lighter';
-    const key = ctx.createRadialGradient(ux(-0.45), vy(0.20), dU(0.04), ux(-0.35), vy(0.38), dU(1.25));
-    key.addColorStop(0, rgba(COL.main, 0.13 * glow));
-    key.addColorStop(0.45, rgba(COL.main, 0.05 * glow));
-    key.addColorStop(1, rgba(COL.main, 0));
-    ctx.fillStyle = key;
-    ctx.fillRect(ux(-1.1), vy(-0.05), dU(2.2), dV(1.15));
-
-    for (const [hu, hvv, hr, ha] of [[-0.05, 0.255, 0.42, 0.085], [0.62, 0.60, 0.26, 0.055], [-0.62, 0.60, 0.26, 0.05]]) {
-      const hg = ctx.createRadialGradient(ux(hu), vy(hvv), 1, ux(hu), vy(hvv), dU(hr));
-      hg.addColorStop(0, rgba(COL.main, ha * glow));
-      hg.addColorStop(1, rgba(COL.main, 0));
-      ctx.fillStyle = hg;
-      ctx.fillRect(ux(hu - hr), vy(hvv - hr), dU(hr * 2), dV(hr * 2));
-    }
-    ctx.globalCompositeOperation = 'source-over';
-
-    const sh = ctx.createLinearGradient(ux(0.20), 0, ux(1.04), 0);
-    sh.addColorStop(0, 'rgba(0,4,7,0)');
-    sh.addColorStop(1, 'rgba(0,4,7,0.40)');
-    ctx.fillStyle = sh;
-    ctx.fillRect(ux(0.15), vy(-0.05), dU(0.95), dV(1.1));
-    for (const s of [-1, 1]) {
-      const bg2 = ctx.createRadialGradient(ux(s * 0.38), vy((P.eyeY ?? 0.5) - 0.015), 1,
-                                           ux(s * 0.38), vy((P.eyeY ?? 0.5) - 0.015), dU(0.34));
-      bg2.addColorStop(0, 'rgba(0,4,7,0.22)');
-      bg2.addColorStop(1, 'rgba(0,4,7,0)');
-      ctx.fillStyle = bg2;
-      ctx.fillRect(ux(-1), vy((P.eyeY ?? 0.5) - 0.16), dU(2), dV(0.30));
-      const ch = ctx.createRadialGradient(ux(s * 0.60), vy(0.615), 1, ux(s * 0.60), vy(0.615), dU(0.36));
-      ch.addColorStop(0, 'rgba(0,4,7,0.20)');
-      ch.addColorStop(1, 'rgba(0,4,7,0)');
-      ctx.fillStyle = ch;
-      ctx.fillRect(ux(-1), vy(0.42), dU(2), dV(0.42));
-    }
-
-    // Surface effects and the thread overlay belong to the hologram mode only. In
-    // cell mode the grid IS the surface, and the extra passes would be measured into
-    // the tone map and turn the face to mush.
-    if (!PORTRAIT) {
-      const effect = clamp(Math.round(P.effect ?? 0), 0, 4);
-      if (effect === 0) drawWire(hp, t);
-      else if (effect === 1) drawMotes(hp, t);
-      else if (effect === 3) drawCircuit(hp, t);
-      else if (effect === 4) drawMatrix(hp, t);
-      drawThreads(t);
-    }
-
-    // scan band
-    const scan = P.scan ?? 0.55;
-    if (!PORTRAIT && scan > 0.01 && !OFF.has('scan')) {
-      const k = (t * (0.055 + 0.045 * look.speed) + 0.12) % 1;
-      const y = vy(0.02 + k * 0.96);
-      const hgt = dV(0.085);
-      const g = ctx.createLinearGradient(0, y - hgt, 0, y + hgt * 0.35);
-      g.addColorStop(0, rgba(COL.main, 0));
-      g.addColorStop(0.72, rgba(COL.main, 0.13 * scan * glow));
-      g.addColorStop(0.94, rgba(COL.core, 0.22 * scan * glow));
-      g.addColorStop(1, rgba(COL.main, 0));
-      ctx.globalCompositeOperation = 'lighter';
-      ctx.fillStyle = g;
-      ctx.fillRect(ux(-1.05), y - hgt, dU(2.1), hgt * 1.35);
-      ctx.globalCompositeOperation = 'source-over';
-    }
-
-    // cheek / brow modelling: two soft washes, no hard edges
-    ctx.globalCompositeOperation = 'lighter';
-    for (const s of [-1, 1]) {
-      const cg = ctx.createRadialGradient(ux(s * 0.58), vy(0.64), 1, ux(s * 0.58), vy(0.64), dU(0.34));
-      cg.addColorStop(0, rgba(COL.main, 0.07 * glow));
-      cg.addColorStop(1, rgba(COL.main, 0));
-      ctx.fillStyle = cg;
-      ctx.fillRect(ux(-1), vy(0.40), dU(2), dV(0.45));
-    }
-    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = '#484848';
+    ctx.fillRect(ux(-1.15), vy(-0.15), dU(2.3), dV(1.4));
     ctx.restore();
-
-    // rim light: soft halo + hot core stroke. Skipped in cell mode: the silhouette is
-    // the cells themselves, and a stroked outline draws a mask around the face.
-    if (!PORTRAIT) {
-    ctx.save();
-    ctx.strokeStyle = rgba(COL.main, 0.30 * glow * S.flick);
-    ctx.lineWidth = 3.4;
-    ctx.shadowColor = rgba(COL.main, 0.75);
-    ctx.shadowBlur = 26 * glow;
-    ctx.stroke(hp);
-    ctx.shadowBlur = 0;
-    const rg = ctx.createLinearGradient(ux(-1), vy(0), ux(1), vy(1));
-    rg.addColorStop(0, rgba(COL.core, 0.85));
-    rg.addColorStop(0.45, rgba(COL.main, 0.75));
-    rg.addColorStop(1, rgba(COL.dim, 0.55));
-    ctx.strokeStyle = rg;
-    ctx.lineWidth = 1.4;
-    ctx.stroke(hp);
-    ctx.restore();
-    }
   }
 
   /* ---------------------------------------------------------------- eyes */
@@ -2061,41 +1349,33 @@
     updateSenses(dt, t);
 
     drawBackdrop(t);
-    if (!PORTRAIT) drawBgEffect(t);
 
-    PORTRAIT = clamp(Math.round(P.matPortrait ?? 0), 0, 1) === 0;
     const hp = headPath();
 
-    if (PORTRAIT) {
-      // pass 1: the anatomy, alone on its own layer
-      const lc = LAYER.c;
-      lc.setTransform(DPR, 0, 0, DPR, 0, 0);
-      lc.clearRect(0, 0, VW, VH);
-      ctx = lc;
-      ctx.save();
-      ctx.translate(0, S.breath);
-      drawShell(t, hp);
-      drawSculpt(hp);          /* the definition, before it is measured */
-      // Ears are drawn with a bright rim + glow, which the measurement turns into
-      // glowing tabs at the temples. Dimmed into the anatomy they read as ears again.
-      ctx.save();
-      ctx.globalAlpha = 0.5;
-      drawEars();
-      ctx.restore();
-      ctx.restore();
-      ctx = mainCtx;
-      // pass 2: measure it, rebuild it as quantised cells. The vector features are
-      // drawn below, on top of this, which is what keeps it reading as a face.
-      compositeCells(t);
-    }
+    // pass 1: the anatomy, alone on its own layer -- one flat base, the sculpt field,
+    // the ears. No room, no rain, no shell lighting: the cells must measure the face.
+    const lc = LAYER.c;
+    lc.setTransform(DPR, 0, 0, DPR, 0, 0);
+    lc.clearRect(0, 0, VW, VH);
+    ctx = lc;
+    ctx.save();
+    ctx.translate(0, S.breath);
+    drawCellBase(hp);
+    drawSculpt(hp);
+    // Ears are drawn with a bright rim + glow, which the measurement turns into
+    // glowing tabs at the temples. Dimmed into the anatomy they read as ears again.
+    ctx.save();
+    ctx.globalAlpha = 0.5;
+    drawEars();
+    ctx.restore();
+    ctx.restore();
+    ctx = mainCtx;
+
+    // pass 2: measure it, rebuild it as quantised cells
+    compositeCells(t);
 
     ctx.save();
     ctx.translate(0, S.breath);
-    if (!PORTRAIT) {
-      if (!OFF.has('projector')) drawProjector(t);
-      drawShell(t, hp);
-      drawEars();
-    }
 
     // thinking ring (under the face, so the features stay on top)
     if (S.think > 0.02) {
@@ -2195,11 +1475,6 @@
     palette();
     layout();
     rebuildGeometry();
-    buildMotes();
-    buildCircuit();
-    buildMatrix();
-    buildBgEffect();
-    buildThreads(false);
     buildRain();
   }
 
@@ -2221,6 +1496,12 @@
     },
     setGaze(x, y) { S.tgx = clamp(Number(x) || 0, -1, 1); S.tgy = clamp(Number(y) || 0, -1, 1);
                    S.gazeX = S.tgx; S.gazeY = S.tgy; S.nextSaccade = 1e9; },
+    // a probe for exactly this class of bug: "the frame runs but nothing paints"
+    debug: () => ({
+      onMain: ctx === mainCtx, vw: VW, vh: VH, dpr: DPR,
+      layer: !!LAYER.c, cells: !!CELLS.cv, sculpt: !!SCULPT.cv,
+      head: { ...HEAD }, err: window.__frameErr || null,
+    }),
     get stats() {
       return { fps: S.fps, state: S.state, aperture: S.aperture, head: { ...HEAD },
                blinks: S.blinks, blink: S.blink, browL: S.browL, browR: S.browR,
