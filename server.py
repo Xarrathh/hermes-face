@@ -28,6 +28,7 @@ AUDIO = HERE / "audio"
 AUDIO.mkdir(exist_ok=True)
 CONFIG = HERE / "config.json"
 SCHEMA = WEB / "schema.json"
+PRESETS_FILE = WEB / "presets.json"
 
 HERMES_HOME = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
 
@@ -260,10 +261,21 @@ def _kill_turn(wait: float = 3.0) -> bool:
 
 # --------------------------------------------------------------------- face spec
 def load_schema() -> dict:
+    data: dict = {}
     try:
-        return json.loads(SCHEMA.read_text(encoding="utf-8"))
+        data = json.loads(SCHEMA.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return {"groups": [], "presets": {}}
+        data = {"groups": [], "presets": {}}
+    # Presets live in their own file so the parameter schema stays a stable contract:
+    # three agents rewriting one schema.json to change a look is a merge conflict by
+    # construction. A schema that still carries presets keeps working -- the file wins.
+    try:
+        presets = json.loads(PRESETS_FILE.read_text(encoding="utf-8"))
+        if isinstance(presets, dict) and isinstance(presets.get("presets"), dict):
+            data["presets"] = presets["presets"]
+    except (OSError, json.JSONDecodeError):
+        pass
+    return data
 
 
 SCHEMA_DATA = load_schema()

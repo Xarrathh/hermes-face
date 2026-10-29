@@ -142,7 +142,7 @@ install -d "$PREFIX" "$PREFIX/web" "$PREFIX/audio"
 # code: always replaced, so an upgrade is just re-running this script
 install -m 0644 "$REPO/server.py"   "$PREFIX/server.py"
 install -m 0644 "$REPO/README.md"   "$PREFIX/README.md"
-for f in index.html face.js ui.js schema.json; do
+for f in index.html face.js ui.js schema.json presets.json; do
   install -m 0644 "$REPO/web/$f" "$PREFIX/web/$f"
 done
 if [ -f "$REPO/INSTALL.md" ]; then install -m 0644 "$REPO/INSTALL.md" "$PREFIX/INSTALL.md"; fi
