@@ -1207,7 +1207,9 @@
       "browMotion": 0.0,
       "nostrilFlare": 0.0,
       "earMotion": 0.0,
-      "forehead": 1.06
+      "forehead": 1.06,
+      "matLightY": 0.24,
+      "matLightSpread": 0.38
     },
     "Alien": {
       "hue": 100,
@@ -1269,7 +1271,9 @@
       "browMotion": 0.25,
       "nostrilFlare": 0.2,
       "earMotion": 0.6,
-      "forehead": 1.18
+      "forehead": 1.18,
+      "matLightY": 0.24,
+      "matLightSpread": 0.38
     },
     "Goblin": {
       "hue": 92,
@@ -1331,7 +1335,9 @@
       "browMotion": 1.0,
       "nostrilFlare": 1.0,
       "earMotion": 1.0,
-      "forehead": 0.76
+      "forehead": 0.76,
+      "matLightY": 0.24,
+      "matLightSpread": 0.38
     },
     "Spectre": {
       "hue": 195,
@@ -1391,7 +1397,9 @@
       "gaze": 0.25,
       "jawDrop": 0.5,
       "browMotion": 0.1,
-      "forehead": 0.96
+      "forehead": 0.96,
+      "matLightY": 0.24,
+      "matLightSpread": 0.38
     },
     "Marble": {
       "hue": 212,
@@ -1452,7 +1460,9 @@
       "browMotion": 0.05,
       "nostrilFlare": 0.05,
       "earMotion": 0.1,
-      "forehead": 0.9
+      "forehead": 0.9,
+      "matLightY": 0.24,
+      "matLightSpread": 0.38
     }
   }
 }

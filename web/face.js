@@ -1288,6 +1288,13 @@
     const upper = (x) => seam(x) - upH * (2.25 + 0.75 * cupid) * shape(x) + notch(x);
     const lower = (x) => seam(x) + lowH * (2.25 + 0.40 * lip) * shape(x);
     const lowerHi = (x) => seam(x) + lowH * (1.05 + 0.20 * lip) * shape(x);
+    const lipPath = () => {
+      ctx.beginPath();
+      ctx.moveTo(-mwS, cornerY);
+      for (let i = 1; i <= N; i++) { const x = xAt(i); ctx.lineTo(x, upper(x)); }
+      for (let i = N; i >= 0; i--) { const x = xAt(i); ctx.lineTo(x, lower(x)); }
+      ctx.closePath();
+    };
 
     ctx.save();
     ctx.translate(ux(0), 0);
@@ -1305,22 +1312,14 @@
 
     // lip body: enough occlusion to seat the mouth, not a solid black lozenge that
     // punches a hole through the hologram
-    ctx.beginPath();
-    ctx.moveTo(-mwS, cornerY);
-    for (let i = 1; i <= N; i++) { const x = xAt(i); ctx.lineTo(x, upper(x)); }
-    for (let i = N; i >= 0; i--) { const x = xAt(i); ctx.lineTo(x, lower(x)); }
-    ctx.closePath();
+    lipPath();
     // Opaque. The translucent body was designed to sit on a hologram you could see
     // through; on a cell face it just lets the cells show through the lips, which reads
     // as a transparent mouth however high the Features transparency goes.
     ctx.fillStyle = 'rgb(4,15,20)';      // fully solid: the lips occlude the cells
     ctx.fill();
 
-    ctx.beginPath();
-    ctx.moveTo(-mwS, cornerY);
-    for (let i = 1; i <= N; i++) { const x = xAt(i); ctx.lineTo(x, upper(x)); }
-    for (let i = N; i >= 0; i--) { const x = xAt(i); ctx.lineTo(x, lower(x)); }
-    ctx.closePath();
+    lipPath();
     const lg = ctx.createLinearGradient(0, cyM - upH * 3, 0, cyM + lowH * 3);
     lg.addColorStop(0, rgba(COL.dim, 0.46 * glow));
     lg.addColorStop(0.45, rgba(COL.deep, 0.62 * glow));
@@ -1390,6 +1389,34 @@
       i ? ctx.lineTo(x, lowerHi(x)) : ctx.moveTo(x, lowerHi(x));
     }
     ctx.stroke();
+
+    // ---- volume: a lip is a rounded surface, so it carries one soft specular band just
+    // under the seam that falls away to nothing at the bottom edge. Additive because this
+    // is light rather than paint, and clipped to the lip so it cannot spill on the face.
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    lipPath();
+    ctx.clip();
+    const gloss = ctx.createLinearGradient(0, seam(0) - lowH * 0.2, 0, lower(0) + lowH * 0.9);
+    gloss.addColorStop(0, rgba(COL.core, 0.06 * glow));
+    gloss.addColorStop(0.30, rgba(COL.core, 0.26 * glow));   // the specular band
+    gloss.addColorStop(0.55, rgba(COL.core, 0.10 * glow));
+    gloss.addColorStop(1, rgba(COL.main, 0));
+    ctx.fillStyle = gloss;
+    ctx.fillRect(-mwS, seam(0), mwS * 2, lowH * 8);
+    ctx.restore();
+
+    // ---- halo: a faint bloom around the whole mouth. At cell resolution this is what
+    // makes the lips sit in front of the face instead of being drawn on it.
+    ctx.save();
+    lipPath();
+    ctx.strokeStyle = rgba(COL.main, 0.20 * glow);
+    ctx.lineWidth = 2.0;
+    ctx.shadowColor = rgba(COL.main, 0.60 * glow);
+    ctx.shadowBlur = 14 * glow;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.restore();
 
     // corners
     ctx.fillStyle = rgba(COL.core, 0.34 * glow);
