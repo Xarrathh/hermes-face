@@ -64,7 +64,7 @@
     COL.core = hsl2rgb(h, s * 0.22, 0.94);
     COL.dim = hsl2rgb(h, s * 0.95, 0.36);
     COL.deep = hsl2rgb(h, s, 0.10);
-    COL.ramp = rampStops(h, s);        // the cell quantiser's six-stop ramp
+    COL.ramp = rampStops(h, s, P.hue2, P.sat2);   // the cell quantiser's six-stop ramp
   }
 
   /* ---------------------------------------------------------------- layout */
@@ -613,7 +613,8 @@
     // leaves a stale relief map behind the new features
     const key = [cols, rows, bx.toFixed(1), by.toFixed(1),
                  P.eyeY, P.eyeU, P.eyeW, P.noseTop, P.noseLength, P.noseWidth,
-                 P.mouthY, P.mouthWidth, P.matLight, P.matLightY, P.matLightSpread].join('|');
+                 P.mouthY, P.mouthWidth, P.matLight, P.matLightY, P.matLightSpread,
+                 P.matAO, P.matLightX, P.matRim].join('|');
     if (SCULPT.key === key) return;
     SCULPT.key = key;
 
@@ -654,7 +655,14 @@
         // on the face. A lower, tighter key lights the brow and the cheeks instead.
         const lightY = clamp(P.matLightY ?? 0.24, 0.05, 0.60);
         const lightSpread = clamp(P.matLightSpread ?? 0.38, 0.15, 0.60);
-        s += 0.24 * light * g2(u, vn, 0, lightY, 1.02, lightSpread);
+        // Where the lamp sits across the face. 0 is the frontal bloom this face was built
+        // around; moving it puts a shadow on the far cheek and a lit ridge on the near one,
+        // which is the difference between a lit mask and a head with a form.
+        const lightX = clamp(P.matLightX ?? 0, -1, 1) * 0.55;
+        s += 0.24 * light * g2(u, vn, lightX, lightY, 1.02, lightSpread);
+
+        // how hard the anatomical shadows are: sockets, under the nose, the mouth seam
+        const ao = clamp(P.matAO ?? 1, 0, 2);
 
         // the light falls off to the edges and to the jaw: symmetric, one term each
         s -= 0.26 * Math.pow(clamp(nx, 0, 1.25), 2.2);
@@ -662,18 +670,23 @@
 
         // sockets: the only shadows with a job -- they seat the eyes in the face
         for (const side of [-1, 1]) {
-          s -= 0.20 * g2(u, vn, side * eyeU, eyeY, eyeW * 0.55, 0.055);
+          s -= 0.20 * ao * g2(u, vn, side * eyeU, eyeY, eyeW * 0.55, 0.055);
         }
 
         // nose: one highlight down the bridge, one soft shadow under the tip
         // narrower and weaker than it was: at 0.16 over 0.36 nose-widths it read as a bright
         // stripe down every face, which is what made the nose look like a beak
         s += 0.10 * g2(u, vn, 0, noseTop + noseLen * 0.52, noseW * 0.26, noseLen * 0.72);
-        s -= 0.13 * g2(u, vn, 0, noseTop + noseLen * 1.15, noseW * 0.95, 0.022);
+        s -= 0.13 * ao * g2(u, vn, 0, noseTop + noseLen * 1.15, noseW * 0.95, 0.022);
 
         // mouth: the seam, and a small chin catch under it
-        s -= 0.15 * g2(u, vn, 0, mouthY + 0.004, mouthW * 1.00, 0.007);
+        s -= 0.15 * ao * g2(u, vn, 0, mouthY + 0.004, mouthW * 1.00, 0.007);
         s += 0.07 * g2(u, vn, 0, 0.905, 0.45, 0.060);
+
+        // a thin bright band just inside the silhouette: a backlight that separates the
+        // head from the glyph rain without adding a second light model to the face
+        const rim = clamp(P.matRim ?? 0, 0, 1);
+        if (rim > 0.001) s += rim * 0.13 * Math.exp(-Math.pow((clamp(nx, 0, 1.2) - 0.88) / 0.11, 2));
 
         // fade the relief out at the silhouette, or it draws its own hard edge
         s = 0.5 + (s - 0.5) * clamp((1 - nx) / 0.14, 0, 1);
@@ -724,17 +737,40 @@
   const CELLS = { cv: null, c: null, sm: null, smc: null, img: null, colGain: null, cols: 0, rows: 0 };
   const SUBX = 3, SUBY = 2;                  // sub-pixels per cell: the thread profile
 
-  function rampStops(h, s) {
+  function rampStops(h, s, h2, s2) {
     // near-black teal -> deep -> matrix green -> hot -> white. Same six-stop shape as
     // the original face, keyed to the hue/sat sliders so the editor still owns colour.
+    //
+    // Two hues, not one: the shadow end carries `hue`/`sat` and the highlight end drifts
+    // to `hue2`/`sat2`. Monochrome light is what made every colour scheme read as neon;
+    // skin needs a warm mid/highlight over a cooler shadow. With hue2 == hue and
+    // sat2 == sat this is byte-for-byte the single-hue ramp it replaced, so an existing
+    // config.json renders exactly as before.
+    const H2 = Number.isFinite(h2) ? h2 : h;
+    const S2 = Number.isFinite(s2) ? s2 : s;
+    // How much the top of the ramp is allowed to desaturate into white. At 1 this is the
+    // original specular ramp; at 0 the brightest cells stay the highlight hue. Skin needs
+    // the second: a lit forehead that burns to white reads as a mask, not a face.
+    const spec = clamp(Number.isFinite(P.matSpec) ? P.matSpec : 1, 0, 1);
+    const dh = ((H2 - h) % 360 + 540) % 360 - 180;      // shortest way round the wheel
+    const at = (L, satMul, light) => hsl2rgb(
+      h + dh * Math.pow(clamp(L, 0, 1), 0.85),
+      lerp(s, S2, clamp(L, 0, 1)) * satMul,
+      light,
+    );
+    const top = (L, satMul, light) => hsl2rgb(
+      h + dh * Math.pow(clamp(L, 0, 1), 0.85),
+      lerp(s, S2, clamp(L, 0, 1)) * lerp(1, satMul, spec),
+      lerp(Math.max(0.30, light - 0.08), light, spec),
+    );
     return [
-      [0.00, hsl2rgb(h, s * 0.95, 0.015)],
-      [0.18, hsl2rgb(h, s * 0.98, 0.060)],
-      [0.40, hsl2rgb(h, s, 0.170)],
-      [0.62, hsl2rgb(h, s, 0.360)],
-      [0.82, hsl2rgb(h, s * 0.75, 0.640)],
-      [0.94, hsl2rgb(h, s * 0.40, 0.840)],
-      [1.00, hsl2rgb(h, s * 0.08, 0.980)],
+      [0.00, at(0.00, 0.95, 0.015)],
+      [0.18, at(0.18, 0.98, 0.060)],
+      [0.40, at(0.40, 1.00, 0.170)],
+      [0.62, at(0.62, 1.00, 0.360)],
+      [0.82, top(0.82, 0.75, 0.640)],
+      [0.94, top(0.94, 0.40, 0.840)],
+      [1.00, top(1.00, 0.08, 0.980)],
     ];
   }
 
@@ -952,7 +988,14 @@
     const gy = S.gazeY * hh * 0.22 - (S.state === 'thinking' ? hh * 0.22 : 0);
 
     const ig = ctx.createRadialGradient(gx, gy, ir * 0.08, gx, gy, ir);
-    ig.addColorStop(0.00, rgba(COL.core, 0.98));
+    // A real iris is a mid-tone disc under a bright sclera; the hologram iris is the
+    // reverse -- lit from inside, brighter than the eye around it. That glow is most of
+    // what makes a warm skin tone read as a vampire, so it is a dial rather than a rule:
+    // eyeGlow 1 keeps the original, 0 sits the iris on the main tone with a matte centre.
+    const eg = clamp(P.eyeGlow ?? 1, 0, 1);
+    const irisCore = eg > 0.999 ? COL.core
+      : [lerp(COL.main[0], COL.core[0], eg), lerp(COL.main[1], COL.core[1], eg), lerp(COL.main[2], COL.core[2], eg)];
+    ig.addColorStop(0.00, rgba(irisCore, 0.98));
     ig.addColorStop(0.30, rgba(COL.main, 0.95));
     ig.addColorStop(0.72, rgba(COL.dim, 0.92));
     ig.addColorStop(0.94, rgba(COL.deep, 0.95));
@@ -963,7 +1006,7 @@
     ctx.fill();
 
     // fibres
-    ctx.strokeStyle = rgba(COL.core, 0.26);
+    ctx.strokeStyle = rgba(COL.core, 0.26 * (0.25 + 0.75 * eg));
     ctx.lineWidth = 0.8;
     for (let i = 0; i < 14; i++) {
       const ang = (i / 14) * TAU + t * 0.04;
@@ -1002,13 +1045,18 @@
     ctx.restore();
 
     // lids: a dark stroke underneath keeps them readable over bright code
+    // The lit lid line is the one bright stroke on the face, and at full brightness it
+    // reads as drawn-on eyeliner rather than a lid edge. It follows eyeGlow with the iris:
+    // a matte eye gets a lid that is only as bright as the surrounding skin.
+    const lidCol = eg > 0.999 ? COL.core
+      : [lerp(COL.main[0], COL.core[0], eg), lerp(COL.main[1], COL.core[1], eg), lerp(COL.main[2], COL.core[2], eg)];
     ctx.strokeStyle = 'rgba(0,3,5,0.75)';
     ctx.lineWidth = 3.6;
     ctx.beginPath();
     ctx.moveTo(-hw, 0);
     ctx.bezierCurveTo(-hw * 0.46, -hh * 1.32, hw * 0.38, -hh * 1.26, hw, -hh * 0.08);
     ctx.stroke();
-    ctx.strokeStyle = rgba(COL.core, 0.72 * glow);
+    ctx.strokeStyle = rgba(lidCol, 0.72 * glow);
     ctx.lineWidth = 1.9;
     ctx.lineJoin = 'round';
     ctx.shadowColor = rgba(COL.main, 0.55);
@@ -1034,14 +1082,17 @@
     ctx.stroke();
 
     // corner accents
-    ctx.fillStyle = rgba(COL.core, 0.6);
+    ctx.fillStyle = rgba(lidCol, 0.6);
     ctx.beginPath();
     ctx.arc(-hw, 0, 1.5, 0, TAU);
     ctx.fill();
 
     // lashes: short tapered strokes off the upper lid, longer and denser
-    // towards the outer corner
+    // towards the outer corner. Dark by default in a matte eye -- real lashes are the
+    // darkest thing on a face, not a white fringe.
     const lashAmt = clamp(P.lashes ?? 0.9, 0, 2);
+    const lashCol = eg > 0.999 ? COL.core
+      : [lerp(COL.deep[0] * 0.5, COL.core[0], eg), lerp(COL.deep[1] * 0.5, COL.core[1], eg), lerp(COL.deep[2] * 0.5, COL.core[2], eg)];
     if (lashAmt > 0.02 && !OFF.has('lashes')) {
       const p0 = [-hw, 0];
       const p1 = [-hw * 0.46, -hh * 1.32];
@@ -1073,7 +1124,7 @@
         if (ny > 0) { nx = -nx; ny = -ny; }
         const len = lashLen * (0.45 + 0.85 * t) * (1 - 0.35 * Math.abs(S.blink - 0.5));
         const bend = len * 0.35;
-        ctx.strokeStyle = rgba(COL.core, (0.16 + 0.24 * Math.min(1, lashAmt)) * glow);
+        ctx.strokeStyle = rgba(lashCol, (0.16 + 0.24 * Math.min(1, lashAmt)) * glow);
         ctx.lineWidth = Math.max(0.7, w * 0.0065);
         ctx.beginPath();
         ctx.moveTo(x, y);
