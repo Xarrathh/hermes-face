@@ -27,6 +27,7 @@ WEB = HERE / "web"
 AUDIO = HERE / "audio"
 AUDIO.mkdir(exist_ok=True)
 CONFIG = HERE / "config.json"
+THEME_SYNC_OFF = HERE / "theme-sync-off"      # flag: his colours beat the theme hook
 SCHEMA = WEB / "schema.json"
 PRESETS_FILE = WEB / "presets.json"
 
@@ -495,6 +496,7 @@ def snapshot() -> dict:
     s["voxtype"] = voxtype_state()
     s["rev"] = config_rev()
     s["build"] = page_build()
+    s["theme_sync"] = not THEME_SYNC_OFF.exists()
     return s
 
 
@@ -1040,18 +1042,30 @@ class Handler(BaseHTTPRequestHandler):
                     if payload["voice"] in VOICE_SET:
                         cfg["voice"] = payload["voice"]
                 changed = False
+                manual_colour = False
                 for key, value in payload.items():
                     if key not in PARAM_SPEC:
                         continue
                     v = coerce(key, value)
                     if v is None:
                         continue
+                    if key in ("hue", "hue2") and not payload.get("theme_hook"):
+                        manual_colour = True      # he picked colours himself
                     cfg["params"][key] = v
                     changed = True
                 if changed or "voice" in payload:
                     save_config(cfg)
+                # His own colour edit turns the theme hook off: the point of the hook is to
+                # follow the theme until he says otherwise, and a slider is him saying so.
+                if manual_colour:
+                    try:
+                        THEME_SYNC_OFF.parent.mkdir(parents=True, exist_ok=True)
+                        THEME_SYNC_OFF.write_text("manual colour edit\n", encoding="utf-8")
+                    except OSError:
+                        pass
                 out = {"ok": True, "params": cfg["params"],
-                       "voice": cfg["voice"], "rev": config_rev()}
+                       "voice": cfg["voice"], "theme_sync": not THEME_SYNC_OFF.exists(),
+                       "rev": config_rev()}
             return self._json(out)
 
         if path == "/presets":
