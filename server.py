@@ -98,7 +98,16 @@ def load_voices() -> list[tuple[str, str]]:
             rows.append((v.get("ShortName", ""), v.get("Locale", ""), v.get("Gender", "")))
     except Exception:                                   # noqa: BLE001
         try:
-            cli = shutil.which("edge-tts") or str(Path.home() / ".local/bin/edge-tts")
+            # The venv beside this file is the one the installer built, and the unit's PATH
+            # does not carry it: a PATH-only lookup lands on the static list even on a box
+            # where edge-tts is installed and online.
+            candidates = [shutil.which("edge-tts"),
+                          str(Path(__file__).resolve().parent / ".venv" / "bin" / "edge-tts"),
+                          str(Path.home() / ".local" / "bin" / "edge-tts"),
+                          "/usr/bin/edge-tts"]
+            cli = next((c for c in candidates if c and Path(c).exists()), "")
+            if not cli:
+                return list(VOICES_STATIC)
             raw = subprocess.run([cli, "--list-voices"], capture_output=True,
                                   text=True, timeout=25).stdout
             for line in raw.splitlines()[2:]:
@@ -319,6 +328,22 @@ def hermes_voice() -> str:
 
 # --------------------------------------------------------------------- config
 VOICE_SET.add(hermes_voice())
+
+
+def refresh_voices() -> None:
+    """Re-fetch the voice list when the service booted holding only the shipped fallback.
+
+    load_voices() runs once at import, so a boot before the network (or before the unit's
+    PATH could see edge-tts) pinned the picker to eleven voices for the process lifetime.
+    /voices calls this, so the picker heals as soon as the box is online.
+    """
+    global VOICES, VOICE_SET
+    rows = load_voices()
+    if len(rows) <= len(VOICES_STATIC):
+        return
+    VOICES = rows
+    VOICE_SET = {v for v, _ in VOICES}
+    VOICE_SET.add(hermes_voice())
 
 
 def load_config() -> dict:
@@ -738,6 +763,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"builtin": SCHEMA_DATA.get("presets", {}),
                                 "custom": custom_presets(cfg)})
         if path == "/voices":
+            if len(VOICES) <= len(VOICES_STATIC):
+                refresh_voices()
             return self._json({"voices": VOICES, "current": load_config()["voice"]})
         if path == "/state":
             return self._json(snapshot())
