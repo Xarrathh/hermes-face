@@ -16,6 +16,7 @@
   let lastAudio = '';
   let busy = false;
   let prevVox = 'idle';
+  let barged = false;
   let buildAtLoad = 0;
   let voxText = '';            // text present at the moment dictation started
   let submitted = '';
@@ -563,6 +564,20 @@
       }
 
       busy = st.agent !== 'idle';
+
+      // Barge-in: the moment he starts talking, the voice stops mid-sentence and the turn
+      // behind it is dropped, so he is never speaking over the face.
+      const talking = st.voxtype === 'recording';
+      if (talking && (busy || (audioEl && !audioEl.paused))) {
+        if (!barged) {
+          barged = true;
+          interruptTurn();
+          heardEl.textContent = 'listening…';
+          busy = false;
+        }
+      } else if (!talking) {
+        barged = false;
+      }
       api().setState(state);
       api().setMood(st.mood || 'neutral');
       document.body.dataset.state = state;
