@@ -214,7 +214,7 @@ def hermes_caps() -> dict[str, bool]:
     """
     if _CAPS:
         return _CAPS
-    caps = {"query_file": False, "create_if_missing": False}
+    caps = {"query_file": False, "create_if_missing": False, "stream_json": False}
     try:
         out = subprocess.run([str(HERMES), "chat", "--help"], capture_output=True,
                              text=True, timeout=20).stdout
@@ -222,6 +222,7 @@ def hermes_caps() -> dict[str, bool]:
         out = ""
     caps["query_file"] = "--query-file" in out
     caps["create_if_missing"] = "--create-if-missing" in out
+    caps["stream_json"] = "stream-json" in out
     _CAPS.update(caps)
     return _CAPS
 
@@ -234,6 +235,40 @@ def parse_quiet(out: str) -> tuple[str, str]:
     sid = m.group(1) if m else ""
     body = SID_LINE.sub("", text).strip()
     return body, sid
+
+
+def parse_stream(out: str, err: str) -> tuple[str, str]:
+    """Reply and session id out of `--format stream-json` JSONL.
+
+    Text mode puts tool output on stdout as well, so a tool that prints (the patch diff is
+    the worst offender) landed in `/state.reply` and the face spoke the code at him. The
+    JSONL protocol carries the answer in the `result` record and tool output in
+    `tool_result` records, which are ignored here on purpose.
+    """
+    final, chunks, sid = "", [], ""
+    for line in (out or "").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(ev, dict):
+            continue
+        kind = ev.get("type")
+        if kind == "text" and isinstance(ev.get("text"), str):
+            chunks.append(ev["text"])
+        elif kind == "result":
+            if isinstance(ev.get("text"), str) and ev["text"].strip():
+                final = ev["text"]
+            sid = sid or str(ev.get("session_id") or "")
+        elif kind == "system" and not sid:
+            sid = str(ev.get("session_id") or "")
+    if not sid:
+        m = SID_LINE.search(err or "")
+        sid = m.group(1) if m else ""
+    return (final or "".join(chunks)).strip(), sid
 
 
 def _kill_turn(wait: float = 3.0) -> bool:
@@ -618,10 +653,10 @@ def run_turn(text: str, seq: int) -> None:
     else:
         qfile = AUDIO / f"q-{int(time.time() * 1000)}.txt"
         qfile.write_text(PROMPT_PREFIX + heard, encoding="utf-8")
-        # -Q is the programmatic mode the current CLI actually has: it prints the
-        # final response plus a `session_id: ...` line, and nothing else. The old
-        # invocation asked for `--format stream-json`, which this Hermes no longer
-        # accepts, so every turn failed with "unrecognized arguments".
+        # -Q used to be the only programmatic mode, but it still lets a tool's own print
+        # (a patch diff) onto stdout, and the face then spoke the code at him. Where the
+        # CLI has --format stream-json, the turn speaks the protocol instead and the answer
+        # comes from the result record alone.
         cmd = [str(HERMES), "chat"]
         caps = hermes_caps()
         if caps["query_file"]:
@@ -630,7 +665,10 @@ def run_turn(text: str, seq: int) -> None:
             # Pre-0.20 CLIs only take the prompt inline. Fine for a spoken line; the
             # file exists either way so the cleanup path stays identical.
             cmd += ["-q", PROMPT_PREFIX + heard]
-        cmd += ["-Q", "--source", "tool"]
+        if caps["stream_json"]:
+            cmd += ["--format", "stream-json", "--source", "tool"]
+        else:
+            cmd += ["-Q", "--source", "tool"]
         if RE_SID.fullmatch(sid or "") and sid != FACE_SESSION:
             cmd += ["--resume", sid]
         elif caps["create_if_missing"]:
@@ -675,7 +713,10 @@ def run_turn(text: str, seq: int) -> None:
 
             # `hermes chat -Q` prints the reply on stdout and `session_id: ...` on
             # stderr, so both streams have to be read to keep the thread.
-            reply, got_sid = parse_quiet(out)
+            if caps["stream_json"]:
+                reply, got_sid = parse_stream(out, err)
+            else:
+                reply, got_sid = parse_quiet(out)
             if not got_sid:
                 _, got_sid = parse_quiet(err)
             new_sid = got_sid or new_sid or sid or FACE_SESSION
