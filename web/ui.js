@@ -510,18 +510,22 @@
     }
   });
 
-  // Shortcuts below are bare keys, so anything typed into a field must be left alone: the
-  // profile-name input made every "e" in a name close the panel.
+  // Shortcuts carry Alt, so typing in a field is safe and this handler must not bail on
+  // altKey the way it bails on ctrl/meta (the browser keeps those for itself).
   const isField = (el) => !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
 
   addEventListener('keydown', (e) => {
-    if (e.target === line || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.target === line || e.ctrlKey || e.metaKey) return;
     if (isField(e.target)) {
       if (e.key === 'Escape') e.target.blur();
       return;
     }
-    if (e.key === 'e' || e.key === 'E') { e.preventDefault(); togglePanel(); }
-    if (e.key === 'h' || e.key === 'H') { e.preventDefault(); toggleHistory(); }
+    const k = (e.key || '').toLowerCase();
+    if (e.altKey && !e.getModifierState('AltGraph')) {
+      if (k === 'e') { e.preventDefault(); togglePanel(); }
+      if (k === 'h') { e.preventDefault(); toggleHistory(); }
+      return;
+    }
     if (e.key === 'Escape') togglePanel(false);
   });
 

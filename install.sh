@@ -327,7 +327,7 @@ Installed.
   window    $BIN_DIR/hermes-face-kiosk --app   app window (WM can float/tile it)
             $BIN_DIR/hermes-face-kiosk         fullscreen kiosk, nothing else on screen
   logs      journalctl --user -u hermes-face -f
-  look      press E in the page for the editor; every slider saves
+  look      press Alt+E in the page for the editor; every slider saves
   voice     press V in the page, or set tts.edge.voice in $HERMES_HOME/config.yaml
 
 Next: the face runs \`hermes chat\` per turn, so it is the same agent with its own

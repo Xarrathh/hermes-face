@@ -83,7 +83,7 @@ hermes-face-kiosk                       # true kiosk: fullscreen, no chrome, no 
 xdg-open http://127.0.0.1:9120/face/    # or just a normal tab
 ```
 
-In the page: **E** opens the editor drawer, **V** picks the voice, **F9** dictates
+In the page: **Alt+E** opens the editor drawer, **Alt+H** the history, **V** picks the voice, **F9** dictates
 (where voxtype exists), the line at the bottom types a turn. Everything you change
 saves to `config.json` as you drag it.
 

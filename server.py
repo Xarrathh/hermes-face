@@ -73,6 +73,9 @@ VOICES_STATIC = [
 ]
 
 
+VOICE_RE = re.compile(r"[a-z]{2,3}-[A-Za-z]{2,4}-[A-Za-z0-9]+Neural")
+
+
 def _voice_label(short: str, locale: str, gender: str) -> str:
     """`en-ZA · Leah (Female)`: locale first, because that is how a human picks one."""
     name = short
@@ -367,7 +370,15 @@ def load_config() -> dict:
         v = coerce(key, params.get(key, default))
         merged[key] = default if v is None else v
     cfg["params"] = merged
-    cfg["voice"] = cfg["voice"] if cfg.get("voice") in VOICE_SET else hermes_voice()
+    saved = cfg.get("voice")
+    # A retired voice still synthesises but drops out of the catalogue, and the picker then
+    # quietly replaced Pierre's chosen voice with Hermes's own. Keep any name shaped like an
+    # edge voice, and fall back only for junk.
+    if isinstance(saved, str) and (saved in VOICE_SET or VOICE_RE.fullmatch(saved)):
+        cfg["voice"] = saved
+        VOICE_SET.add(saved)
+    else:
+        cfg["voice"] = hermes_voice()
     return cfg
 
 
