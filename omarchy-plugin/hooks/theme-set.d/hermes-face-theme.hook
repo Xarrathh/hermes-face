@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
-# Omarchy theme-set hook: nudge the face's two hues toward the new theme's accent.
+# Omarchy theme-set hook: pull the face's palette toward the new theme's own colours.
 #
-# It deliberately does NOT take over the palette: only the hue family moves, saturation and
-# everything else stay exactly as they are in the editor, and the whole hook can be switched
-# off with `hermes-face-theme-sync off` so the user's own colours always win.
+# It changes the hue family and its saturation, never the geometry, exposure or anything else
+# he has tuned, and `hermes-face-theme-sync off` (or a manual colour edit) switches it off.
+#
+# Calibration rules, because the first version rotated the highlight by a blind +60 and landed
+# on red from a blue theme:
+#   shadow/mid  <- the theme accent, saturation clamped to 0.30-0.70 (a 0.9 accent reads as neon)
+#   highlight   <- the theme's warm accent only when it sits within 45 degrees of the base;
+#                  otherwise 20 degrees toward warm, which never crosses a third colour family
+# A highlight rotated across the wheel makes the cell ramp blend through magenta, which is what
+# "bad calibration" looked like on screen.
 set -u
 
 FACE_DIR="$HOME/.local/share/hermes-face"
@@ -33,31 +40,48 @@ if [ ! -f "$COLORS" ]; then
   exit 0
 fi
 
-# hue/sat of the accent, computed from the theme file (no dependencies beyond python3)
-read -r HUE SAT <<EOF
+read -r HUE SAT HUE2 SAT2 <<EOF
 $(/usr/bin/python3 - "$COLORS" <<'PY'
 import colorsys, re, sys
 text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
-def grab(key):
+
+def colour(key):
     m = re.search(r'^\s*%s\s*=\s*"#?([0-9a-fA-F]{6})"' % key, text, re.M)
-    return m.group(1) if m else ""
-hexv = grab("accent") or grab("green") or grab("foreground")
-if not hexv:
-    print("0 0.0"); raise SystemExit
-r, g, b = (int(hexv[i:i+2], 16) / 255.0 for i in (0, 2, 4))
-h, l, s = colorsys.rgb_to_hls(r, g, b)
-print(f"{h * 360:.0f} {s:.2f}")
+    if not m:
+        return None
+    hexv = m.group(1)
+    r, g, b = (int(hexv[i:i+2], 16) / 255.0 for i in (0, 2, 4))
+    h, l, s = colorsys.rgb_to_hls(r, g, b)
+    return h * 360.0, s, l
+
+base = colour("accent") or colour("blue") or colour("green") or colour("foreground")
+if base is None:
+    print("0 0 0 0")
+    raise SystemExit
+h, s, _ = base
+s = min(0.70, max(0.30, s))
+
+warm = colour("orange") or colour("yellow")
+dh = None
+if warm is not None:
+    dh = ((warm[0] - h) % 360 + 540) % 360 - 180
+if warm is not None and abs(dh) <= 45:
+    h2, s2 = warm[0], min(0.70, max(0.20, warm[1] * 0.8))
+else:
+    h2, s2 = (h - 20.0) % 360.0, min(0.70, max(0.20, s * 0.6))
+
+print(f"{h:.0f} {s:.2f} {h2:.0f} {s2:.2f}")
 PY
 )
 EOF
 
-if [ -z "${HUE:-}" ] || [ "$HUE" = "0" ] && [ "$SAT" = "0.0" ]; then
-  say "theme: could not read an accent from $COLORS"
+if [ -z "${HUE:-}" ] || [ "${SAT:-0}" = "0" ]; then
+  say "theme: could not read a usable accent from $COLORS"
   exit 0
 fi
 
-HUE2=$(( (HUE + 60) % 360 ))
-say "theme: ${THEME_NAME:-unknown} -> hue $HUE / $HUE2"
+say "theme: ${THEME_NAME:-unknown} -> base $HUE/$SAT, highlight $HUE2/$SAT2"
 curl -s --max-time 3 -X POST -H 'content-type: application/json' \
-  -d "{\"hue\": $HUE, \"hue2\": $HUE2, \"theme_hook\": true}" http://127.0.0.1:9120/params >/dev/null 2>&1 || \
+  -d "{\"hue\": $HUE, \"sat\": $SAT, \"hue2\": $HUE2, \"sat2\": $SAT2, \"theme_hook\": true}" \
+  http://127.0.0.1:9120/params >/dev/null 2>&1 || \
   say "theme: face not reachable, colours not applied"
