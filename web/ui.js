@@ -17,6 +17,7 @@
   let busy = false;
   let prevVox = 'idle';
   let barged = false;
+  let voxHits = 0;
   let buildAtLoad = 0;
   let voxText = '';            // text present at the moment dictation started
   let submitted = '';
@@ -577,9 +578,11 @@
       busy = st.agent !== 'idle';
 
       // Barge-in: the moment he starts talking, the voice stops mid-sentence and the turn
-      // behind it is dropped, so he is never speaking over the face.
+      // behind it is dropped, so he is never speaking over the face. Two polls are required
+      // because a single stray reading of the dictation state used to kill a live turn.
       const talking = st.voxtype === 'recording';
-      if (talking && (busy || (audioEl && !audioEl.paused))) {
+      voxHits = talking ? voxHits + 1 : 0;
+      if (voxHits >= 2 && (busy || (audioEl && !audioEl.paused))) {
         if (!barged) {
           barged = true;
           interruptTurn();
