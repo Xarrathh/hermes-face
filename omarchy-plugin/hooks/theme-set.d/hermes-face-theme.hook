@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Omarchy theme-set hook: nudge the face's two hues toward the new theme's accent.
+#
+# It deliberately does NOT take over the palette: only the hue family moves, saturation and
+# everything else stay exactly as they are in the editor, and the whole hook can be switched
+# off with `hermes-face-theme-sync off` so the user's own colours always win.
+set -u
+
+FACE_DIR="$HOME/.local/share/hermes-face"
+OFF_FLAG="$FACE_DIR/theme-sync-off"
+LOG="$HOME/.cache/hermes-face-bar.log"
+say() { printf '%s %s\n' "$(date '+%F %T')" "$*" >>"$LOG"; }
+
+THEME_NAME="${1:-}"
+[ -n "$THEME_NAME" ] || THEME_NAME=$(cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null)
+
+if [ -e "$OFF_FLAG" ]; then
+  say "theme: sync off, ignored ${THEME_NAME:-unknown}"
+  exit 0
+fi
+
+COLORS="$HOME/.local/state/omarchy/current/theme/colors.toml"
+if [ ! -f "$COLORS" ]; then
+  for base in "$HOME/.config/omarchy/themes" "/usr/share/omarchy/themes"; do
+    if [ -n "$THEME_NAME" ] && [ -f "$base/$THEME_NAME/colors.toml" ]; then
+      COLORS="$base/$THEME_NAME/colors.toml"
+      break
+    fi
+  done
+fi
+if [ ! -f "$COLORS" ]; then
+  say "theme: no colours for ${THEME_NAME:-unknown}"
+  exit 0
+fi
+
+# hue/sat of the accent, computed from the theme file (no dependencies beyond python3)
+read -r HUE SAT <<EOF
+$(/usr/bin/python3 - "$COLORS" <<'PY'
+import colorsys, re, sys
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+def grab(key):
+    m = re.search(r'^\s*%s\s*=\s*"#?([0-9a-fA-F]{6})"' % key, text, re.M)
+    return m.group(1) if m else ""
+hexv = grab("accent") or grab("green") or grab("foreground")
+if not hexv:
+    print("0 0.0"); raise SystemExit
+r, g, b = (int(hexv[i:i+2], 16) / 255.0 for i in (0, 2, 4))
+h, l, s = colorsys.rgb_to_hls(r, g, b)
+print(f"{h * 360:.0f} {s:.2f}")
+PY
+)
+EOF
+
+if [ -z "${HUE:-}" ] || [ "$HUE" = "0" ] && [ "$SAT" = "0.0" ]; then
+  say "theme: could not read an accent from $COLORS"
+  exit 0
+fi
+
+HUE2=$(( (HUE + 60) % 360 ))
+say "theme: ${THEME_NAME:-unknown} -> hue $HUE / $HUE2"
+curl -s --max-time 3 -X POST -H 'content-type: application/json' \
+  -d "{\"hue\": $HUE, \"hue2\": $HUE2}" http://127.0.0.1:9120/params >/dev/null 2>&1 || \
+  say "theme: face not reachable, colours not applied"
