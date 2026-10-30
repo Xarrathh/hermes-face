@@ -399,12 +399,15 @@
   /* ------------------------------------------------------------ audio */
   let ac = null, analyser = null, audioEl = null, sourceNode = null, rafAmp = 0, freqBuf = null;
   let lastSeq = null;   /* the turn this page is currently showing */
+  const q = [];         /* reply chunks waiting to be heard, in order */
+  let qSeq = null, qSeen = 0;
 
   function ensureAudioGraph() {
     if (audioEl) return;
     audioEl = new Audio();
     audioEl.crossOrigin = 'anonymous';
     audioEl.addEventListener('ended', () => {
+      if (q.length) { nextChunk(); return; }     // the reply has more chunks to speak
       fetch('/spoken', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -456,6 +459,13 @@
     ensureAudioGraph();
     if (ac && ac.state === 'suspended') ac.resume().catch(() => {});
     if (!audioEl) return;
+    q.push(url);
+    if (audioEl.paused) nextChunk();
+  }
+
+  function nextChunk() {
+    const url = q.shift();
+    if (!url || !audioEl) return;
     audioEl.src = url;
     audioEl.play().then(() => {
       cancelAnimationFrame(rafAmp);
@@ -470,6 +480,7 @@
   // The new command always wins: if a turn is running it is interrupted first and the
   // reply that was mid-sentence is dropped, rather than the input being refused.
   async function interruptTurn() {
+    q.length = 0;
     if (audioEl) { try { audioEl.pause(); audioEl.currentTime = 0; } catch { /* not loaded */ } }
     lastAudio = '';
     try {
@@ -582,15 +593,22 @@
       api().setMood(st.mood || 'neutral');
       document.body.dataset.state = state;
       stateLabel.textContent = LABEL[state] || state;
+      // a silent failure is the worst failure here: put it where he is looking
+      if (st.error) stateLabel.textContent = 'FAILED — ' + st.error;
 
       if (st.reply && st.agent !== 'idle') said.textContent = st.reply;
       if (st.error) heardEl.textContent = st.error;
 
-      if (st.audio && st.audio !== lastAudio) {
+      if (Array.isArray(st.audio_parts) && st.audio_parts.length) {
+        if (qSeq !== st.seq) { qSeq = st.seq; qSeen = 0; }
+        for (let i = qSeen; i < st.audio_parts.length; i++) play(st.audio_parts[i]);
+        qSeen = st.audio_parts.length;
+        lastAudio = st.audio_parts[st.audio_parts.length - 1];
+      } else if (st.audio && st.audio !== lastAudio) {
         lastAudio = st.audio;
         play(st.audio);
       }
-      if (!st.audio) lastAudio = '';
+      if (!st.audio && !(st.audio_parts || []).length) lastAudio = '';
 
       // dictation finished -> send whatever voxtype typed
       if (prevVox !== 'idle' && st.voxtype === 'idle') {

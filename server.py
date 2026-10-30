@@ -190,15 +190,17 @@ STATE = {
     "heard": "",
     "reply": "",
     "audio": None,
+    "audio_parts": [],      # every spoken chunk of the live turn, in order
     "session": "",
     "seq": 0,
     "error": "",
+    "since": 0.0,           # when the agent state last changed (watchdog input)
 }
 
 
 SID_LINE = re.compile(r"^\s*session_id:\s*(\S+)\s*$", re.M)
 RE_SID = re.compile(r"[0-9A-Za-z_\-]{6,64}")
-FACE_SESSION = "hermes-face"
+FACE_SESSION = os.environ.get("HERMES_FACE_SESSION") or "hermes-face"
 
 
 _CAPS: dict[str, bool] = {}
@@ -471,6 +473,8 @@ def set_if_current(seq: int, **kw) -> bool:
         if STATE["seq"] != seq:
             return False
         STATE.update(kw)
+        if "agent" in kw:
+            STATE["since"] = time.time()     # the watchdog measures from here
         return True
 
 
@@ -539,6 +543,130 @@ def synth(text: str, out: Path, voice: str | None = None) -> None:
     if last:
         raise last
     raise RuntimeError("edge-tts wrote no audio")
+
+
+SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+
+
+def _strip_leading_mood(text: str) -> str:
+    """Drop the `[mood]` prefix before the first sentence is spoken."""
+    return re.sub(r"^\s*\[[A-Za-z ]{2,12}\]\s*", "", text, count=1)
+
+
+def _speak_chunk(text: str, seq: int, index: int) -> int:
+    """Synthesise one early chunk and publish it; returns the next chunk index.
+
+    The page plays `audio_parts` in order, so a chunk that finishes synthesising while he is
+    still hearing the previous one simply queues behind it.
+    """
+    speech = clean_for_speech(text).strip()
+    if not speech:
+        return index
+    out = AUDIO / f"reply-{seq}-{index}.mp3"
+    try:
+        synth(speech, out)
+        if out.stat().st_size == 0:
+            raise RuntimeError("edge-tts wrote an empty file")
+    except Exception as exc:                       # noqa: BLE001
+        set_if_current(seq, error=f"speech failed: {exc}")
+        return index + 1
+    with LOCK:
+        if STATE["seq"] != seq:
+            return index + 1
+        STATE["audio_parts"].append(f"/audio/{out.name}")
+        STATE["audio"] = f"/audio/{out.name}"
+        STATE["agent"] = "speaking"
+    return index + 1
+
+
+def _stream_turn(proc, seq: int, timeout: float = 240.0) -> tuple[str, str, str, int]:
+    """Read a `--format stream-json` turn as it arrives, speaking sentence groups early.
+
+    Returns (raw stdout, raw stderr, unturned text, next chunk index). The caller keeps its
+    normal parsing path, and whatever text is left over is spoken as the final chunk.
+    """
+    out_lines: list[str] = []
+    err_lines: list[str] = []
+
+    def drain_err() -> None:
+        try:
+            for line in proc.stderr:
+                err_lines.append(line)
+        except Exception:                          # noqa: BLE001
+            pass
+
+    err_thread = threading.Thread(target=drain_err, daemon=True)
+    err_thread.start()
+    pending = ""
+    index = 0
+    first = True
+    deadline = time.time() + timeout
+    try:
+        for line in proc.stdout:
+            out_lines.append(line)
+            if time.time() > deadline:
+                _kill_turn()
+                break
+            stripped = line.strip()
+            if not stripped.startswith("{"):
+                continue
+            try:
+                ev = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(ev, dict) or ev.get("type") != "text":
+                continue
+            pending += str(ev.get("text") or "")
+            while True:
+                m = SENTENCE_END.search(pending)
+                if not m:
+                    break
+                head, pending = pending[:m.end()], pending[m.end():]
+                if first:
+                    head = _strip_leading_mood(head)
+                    first = False
+                index = _speak_chunk(head, seq, index)
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            _kill_turn()
+    finally:
+        err_thread.join(timeout=2)
+    return "".join(out_lines), "".join(err_lines), pending.strip(), index
+
+
+def watchdog_loop() -> None:
+    """A silent turn is the failure he cannot see, so force every stall into a readable error.
+
+    Two cases the request path cannot catch: a turn that hangs in `thinking` forever, and a
+    voice that cannot synthesise at all. Both end up as text on screen instead of nothing.
+    """
+    while True:
+        time.sleep(5)
+        with LOCK:
+            agent = STATE.get("agent")
+            since = float(STATE.get("since") or 0.0)
+            seq = STATE["seq"]
+        if agent == "thinking" and since and time.time() - since > 300:
+            _kill_turn()
+            set_if_current(seq, agent="idle",
+                           error="that turn stalled for five minutes, so I stopped it")
+        elif agent == "speaking" and since and time.time() - since > 600:
+            set_if_current(seq, agent="idle", error="the speech never finished playing")
+
+
+def voice_self_check() -> None:
+    """Speak a syllable at boot so a broken voice is visible before the first turn."""
+    probe = AUDIO / "boot-check.mp3"
+    try:
+        synth("Ready.", probe)
+        if probe.stat().st_size == 0:
+            raise RuntimeError("edge-tts wrote an empty file")
+    except Exception as exc:                       # noqa: BLE001
+        with LOCK:
+            STATE["error"] = f"voice unavailable: {exc}"
+    finally:
+        probe.unlink(missing_ok=True)
 
 
 def _auto_idle_after(seconds: float, seq: int) -> None:
@@ -679,6 +807,7 @@ def run_turn(text: str, seq: int) -> None:
         # session and every later turn resumes the id parsed out of it.
 
         reply, new_sid, interrupted = "", sid, False
+        streamed_left, chunk_index = "", 0
         # The previous killed run can still hold the session lock for a moment, so a
         # turn that fails on "live owner" is retried rather than reported as an error.
         for attempt in range(4):
@@ -693,7 +822,10 @@ def run_turn(text: str, seq: int) -> None:
                 RUN["proc"] = proc
                 RUN["seq"] = seq
             try:
-                out, err = proc.communicate(timeout=240)
+                if caps["stream_json"]:
+                    out, err, streamed_left, chunk_index = _stream_turn(proc, seq)
+                else:
+                    out, err = proc.communicate(timeout=240)
             except subprocess.TimeoutExpired:
                 _kill_turn()
                 out, err = "", ""
@@ -735,15 +867,40 @@ def run_turn(text: str, seq: int) -> None:
             reply = "[INTERRUPTED]"
 
     if reply == "[INTERRUPTED]":
-        set_if_current(seq, agent="idle", audio=None)
+        set_if_current(seq, agent="idle", audio=None, audio_parts=[])
         return
     mood, reply = split_mood(reply)
     record_turn(heard, reply, new_sid or "")
-    speech = clean_for_speech(reply)[:1200]
-    if not set_if_current(seq, agent="speaking", reply=reply, mood=mood, session=new_sid or ""):
+    if not set_if_current(seq, reply=reply, mood=mood, session=new_sid or ""):
         return                                     # this turn was abandoned
+
+    # Early chunks already spoke part of the answer; only the tail is left. With no early
+    # chunks (older CLI, or nothing streamed) the whole reply is spoken as one file.
+    if chunk_index:
+        speech = clean_for_speech(streamed_left)[:1200]
+        if speech:
+            chunk_index = _speak_chunk(speech, seq, chunk_index)
+        with LOCK:
+            parts = list(STATE["audio_parts"]) if STATE["seq"] == seq else []
+        if not parts:
+            set_if_current(seq, agent="idle",
+                           error="speech failed: no audio for this turn")
+            return
+        total = 0.0
+        for url in parts:
+            p = AUDIO / Path(url).name
+            try:
+                total += p.stat().st_size / 6000.0
+            except OSError:
+                pass
+        _auto_idle_after(total + 4.0, seq)
+        return
+
+    speech = clean_for_speech(reply)[:1200]
+    if not set_if_current(seq, agent="speaking"):
+        return
     if not speech:
-        set_if_current(seq, agent="idle")
+        set_if_current(seq, agent="idle", error="nothing to say for this turn")
         return
 
     out = AUDIO / f"reply-{seq}.mp3"
@@ -752,11 +909,11 @@ def run_turn(text: str, seq: int) -> None:
         for old in AUDIO.glob("reply-*.mp3"):
             if old != out:
                 old.unlink(missing_ok=True)
-        if not set_if_current(seq, audio=f"/audio/{out.name}"):
+        if not set_if_current(seq, audio=f"/audio/{out.name}", audio_parts=[f"/audio/{out.name}"]):
             return
         _auto_idle_after(out.stat().st_size / 6000.0 + 4.0, seq)
     except Exception as exc:                       # noqa: BLE001
-        set_if_current(seq, error=f"tts: {exc}", agent="idle")
+        set_if_current(seq, error=f"speech failed: {exc}", agent="idle")
 
 
 # --------------------------------------------------------------------- http
@@ -851,7 +1008,7 @@ class Handler(BaseHTTPRequestHandler):
                 STATE["seq"] += 1
                 seq = STATE["seq"]
                 STATE.update(agent="thinking", mood="curious", heard=text.strip(),
-                             reply="", error="", audio=None)
+                             reply="", error="", audio=None, audio_parts=[])
             threading.Thread(target=run_turn, args=(text, seq), daemon=True).start()
             return self._json({"ok": True, "seq": seq})
 
@@ -945,6 +1102,8 @@ def main() -> None:
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     srv.daemon_threads = True
     print(f"hermes-face on http://127.0.0.1:{PORT}/face/ (voice {load_config()['voice']})", flush=True)
+    threading.Thread(target=watchdog_loop, daemon=True).start()
+    threading.Thread(target=voice_self_check, daemon=True).start()
     srv.serve_forever()
 
 
