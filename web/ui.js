@@ -515,15 +515,17 @@
   const isField = (el) => !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
 
   addEventListener('keydown', (e) => {
+    const k = (e.key || '').toLowerCase();
+    // Checked before the "leave typed input alone" rules: the chat line keeps focus on this
+    // page, so bailing out on e.target === line made both shortcuts dead in practice.
+    if (e.altKey && !e.ctrlKey && !e.metaKey && !e.getModifierState('AltGraph')) {
+      if (k === 'e') { e.preventDefault(); togglePanel(); }
+      if (k === 'h') { e.preventDefault(); toggleHistory(); }
+      return;
+    }
     if (e.target === line || e.ctrlKey || e.metaKey) return;
     if (isField(e.target)) {
       if (e.key === 'Escape') e.target.blur();
-      return;
-    }
-    const k = (e.key || '').toLowerCase();
-    if (e.altKey && !e.getModifierState('AltGraph')) {
-      if (k === 'e') { e.preventDefault(); togglePanel(); }
-      if (k === 'h') { e.preventDefault(); toggleHistory(); }
       return;
     }
     if (e.key === 'Escape') togglePanel(false);
