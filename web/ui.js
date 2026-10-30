@@ -355,7 +355,8 @@
       });
       head.append(label, resume);
       box.append(head);
-      for (const turn of (s.turns || []).slice(-12)) {
+      // Newest turn on top: he reads this panel like a log, not a transcript.
+      for (const turn of (s.turns || []).slice(-12).reverse()) {
         const row = document.createElement('div');
         row.className = 'turn';
         const tEl = document.createElement('span');
