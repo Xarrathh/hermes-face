@@ -197,9 +197,10 @@
       const n = name.toLowerCase();
       if (n.startsWith('male')) return 'Male';
       if (n.startsWith('female')) return 'Female';
+      if (n.startsWith('style')) return 'Style';
       return 'Other';
     };
-    for (const cat of ['Male', 'Female', 'Other']) {
+    for (const cat of ['Male', 'Female', 'Style', 'Other']) {
       const names = Object.keys(PRESETS.builtin || {}).filter(n => bucket(n) === cat);
       if (!names.length) continue;
       const label = document.createElement('div');
