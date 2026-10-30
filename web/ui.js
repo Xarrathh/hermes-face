@@ -555,6 +555,24 @@
 
   /* ------------------------------------------------------------ state poll */
   const LABEL = { idle: 'idle', listening: 'listening', thinking: 'thinking', speaking: 'speaking' };
+  // The theme hook (and anything else outside this page) writes params behind its back: a
+  // moved config revision is the only signal the page gets, so re-read and repaint on it.
+  let lastRev = null;
+  let revBusy = false;
+
+  async function syncExternalParams(rev) {
+    if (revBusy) return;
+    revBusy = true;
+    try {
+      const r = await fetch('/params', { cache: 'no-store' });
+      const fresh = await r.json();
+      if (fresh && typeof fresh === 'object') {
+        api().setParams(fresh);
+        document.dispatchEvent(new CustomEvent('face:params', { detail: fresh }));
+      }
+    } catch { /* the next revision change will try again */ }
+    finally { revBusy = false; }
+  }
 
   async function poll() {
     try {
@@ -573,6 +591,14 @@
       if (st.build) {
         if (!buildAtLoad) buildAtLoad = st.build;
         else if (st.build !== buildAtLoad) { location.reload(); return; }
+      }
+
+      if (st.rev) {
+        if (lastRev === null) lastRev = st.rev;
+        else if (st.rev !== lastRev) {
+          lastRev = st.rev;
+          syncExternalParams(st.rev);   // theme hook, presets applied elsewhere, another window
+        }
       }
 
       busy = st.agent !== 'idle';
