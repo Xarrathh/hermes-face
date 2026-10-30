@@ -553,6 +553,13 @@ def _strip_leading_mood(text: str) -> str:
     return re.sub(r"^\s*\[[A-Za-z ]{2,12}\]\s*", "", text, count=1)
 
 
+def _touch_progress(seq: int) -> None:
+    """Any sign of life resets the watchdog clock: a working turn is not a stalled one."""
+    with LOCK:
+        if STATE["seq"] == seq:
+            STATE["since"] = time.time()
+
+
 def _speak_chunk(text: str, seq: int, index: int) -> int:
     """Synthesise one early chunk and publish it; returns the next chunk index.
 
@@ -615,7 +622,9 @@ def _stream_turn(proc, seq: int, timeout: float = 240.0) -> tuple[str, str, str,
             except json.JSONDecodeError:
                 continue
             if not isinstance(ev, dict) or ev.get("type") != "text":
+                _touch_progress(seq)      # tool use and results count as progress too
                 continue
+            _touch_progress(seq)
             pending += str(ev.get("text") or "")
             while True:
                 m = SENTENCE_END.search(pending)
@@ -638,8 +647,9 @@ def _stream_turn(proc, seq: int, timeout: float = 240.0) -> tuple[str, str, str,
 def watchdog_loop() -> None:
     """A silent turn is the failure he cannot see, so force every stall into a readable error.
 
-    Two cases the request path cannot catch: a turn that hangs in `thinking` forever, and a
-    voice that cannot synthesise at all. Both end up as text on screen instead of nothing.
+    A long turn is not a stalled one: every streamed event touches `since`, so this only fires
+    when the agent has produced nothing at all for five minutes. Killing busy turns was the
+    first version of this and it cut real work mid-sentence.
     """
     while True:
         time.sleep(5)
@@ -650,8 +660,8 @@ def watchdog_loop() -> None:
         if agent == "thinking" and since and time.time() - since > 300:
             _kill_turn()
             set_if_current(seq, agent="idle",
-                           error="that turn stalled for five minutes, so I stopped it")
-        elif agent == "speaking" and since and time.time() - since > 600:
+                           error="that turn went silent for five minutes, so I stopped it")
+        elif agent == "speaking" and since and time.time() - since > 900:
             set_if_current(seq, agent="idle", error="the speech never finished playing")
 
 
