@@ -538,6 +538,7 @@ def synth(text: str, out: Path, voice: str | None = None) -> None:
         try:
             asyncio.run(run())
             if out.is_file() and out.stat().st_size > 0:
+                _clear_voice_error()
                 return
         except Exception as exc:                   # noqa: BLE001
             last = exc
@@ -545,6 +546,17 @@ def synth(text: str, out: Path, voice: str | None = None) -> None:
     if last:
         raise last
     raise RuntimeError("edge-tts wrote no audio")
+
+
+def _clear_voice_error() -> None:
+    """A working synth retires the boot-time 'voice unavailable' note.
+
+    A box that boots before its network is up fails the self-check and then speaks perfectly,
+    so the note has to be able to go away on its own.
+    """
+    with LOCK:
+        if str(STATE.get("error", "")).startswith("voice unavailable"):
+            STATE["error"] = ""
 
 
 SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
@@ -668,17 +680,24 @@ def watchdog_loop() -> None:
 
 
 def voice_self_check() -> None:
-    """Speak a syllable at boot so a broken voice is visible before the first turn."""
+    """Speak a syllable at boot so a broken voice is visible before the first turn.
+
+    This box boots before the network is up, so the first attempt routinely fails and the
+    voice is fine a minute later: retry before claiming anything, and let any later successful
+    synth clear the note (see `_clear_voice_error`).
+    """
     probe = AUDIO / "boot-check.mp3"
-    try:
-        synth("Ready.", probe)
-        if probe.stat().st_size == 0:
-            raise RuntimeError("edge-tts wrote an empty file")
-    except Exception as exc:                       # noqa: BLE001
-        with LOCK:
-            STATE["error"] = f"voice unavailable: {exc}"
-    finally:
-        probe.unlink(missing_ok=True)
+    last: Exception | None = None
+    for attempt in range(6):
+        try:
+            synth("Ready.", probe)
+            probe.unlink(missing_ok=True)
+            return
+        except Exception as exc:                   # noqa: BLE001
+            last = exc
+            time.sleep(5 * (attempt + 1))
+    with LOCK:
+        STATE["error"] = f"voice unavailable: {last}"
 
 
 def _auto_idle_after(seconds: float, seq: int) -> None:
