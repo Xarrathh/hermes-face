@@ -26,11 +26,11 @@ BarWidget {
     : agent === "thinking" ? "◐"
     : "○"
 
-  readonly property string tip: !reachable ? "Hermes face: bridge not running"
-    : failure ? "Hermes face: " + failure
-    : agent === "speaking" ? "Hermes face: speaking" + (mood ? " (" + mood + ")" : "")
-    : agent === "thinking" ? "Hermes face: thinking"
-    : "Hermes face: idle — click to open"
+  readonly property string tip: !reachable ? "Hermes face: bridge not running — click to start, middle click to restart"
+    : failure ? "Hermes face: " + failure + " — middle click to restart"
+    : agent === "speaking" ? "Hermes face: speaking" + (mood ? " (" + mood + ")" : "") + " — right click stops it, middle click restarts"
+    : agent === "thinking" ? "Hermes face: thinking — right click stops it, middle click restarts"
+    : "Hermes face: idle — click to open, middle click restarts"
 
   visible: true
   implicitWidth: button.implicitWidth
@@ -73,6 +73,7 @@ BarWidget {
     tooltipText: root.tip
     onPressed: function (b) {
       if (b === Qt.RightButton) root.bar.run(root.faceDir + "/bin/face-interrupt.sh")
+      else if (b === Qt.MiddleButton) root.bar.run(root.faceDir + "/bin/face-restart.sh")
       else root.bar.run(root.faceDir + "/bin/face-focus.sh")
     }
   }
