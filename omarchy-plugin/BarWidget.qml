@@ -19,6 +19,7 @@ BarWidget {
   property string mood: ""
   property string failure: ""
   property bool reachable: false
+  property bool themeSync: true
 
   readonly property string glyph: !reachable ? "✕"
     : failure ? "✕"
@@ -26,11 +27,12 @@ BarWidget {
     : agent === "thinking" ? "◐"
     : "○"
 
-  readonly property string tip: !reachable ? "Hermes face: bridge not running — click to start, middle click to restart"
+  readonly property string tip: (!reachable ? "Hermes face: bridge not running — click to start, middle click to restart"
     : failure ? "Hermes face: " + failure + " — middle click to restart"
     : agent === "speaking" ? "Hermes face: speaking" + (mood ? " (" + mood + ")" : "") + " — right click stops it, middle click restarts"
     : agent === "thinking" ? "Hermes face: thinking — right click stops it, middle click restarts"
-    : "Hermes face: idle — click to open, middle click restarts"
+    : "Hermes face: idle — click to open, middle click restarts")
+    + (themeSync ? "" : " · theme sync off")
 
   visible: true
   implicitWidth: button.implicitWidth
@@ -49,6 +51,7 @@ BarWidget {
           root.agent = String(s.agent || "idle")
           root.mood = String(s.mood || "")
           root.failure = String(s.error || "")
+          root.themeSync = s.theme_sync !== false
         } catch (e) {
           root.reachable = false
         }
