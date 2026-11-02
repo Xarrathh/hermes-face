@@ -84,6 +84,9 @@ BarWidget {
       // A laptop touchpad has no middle button, so nothing important may live only there.
       // Left opens the face, right opens the Hermes menu through Omarchy's own menu plugin
       // (a real menu, keyboard-navigable, not a widget popup), middle still restarts.
+      // The button number is logged because a click that does nothing is otherwise invisible:
+      // it tells us whether the press reached the widget at all and which button it was.
+      console.log("hermes-face: pressed button=" + b)
       if (b === Qt.RightButton) root.bar.run(root.faceDir + "/bin/face-menu.sh")
       else if (b === Qt.MiddleButton) root.bar.run(root.faceDir + "/bin/face-restart.sh")
       else root.bar.run(root.faceDir + "/bin/face-focus.sh")
