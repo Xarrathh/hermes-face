@@ -1061,27 +1061,19 @@ class Handler(BaseHTTPRequestHandler):
                     if payload["voice"] in VOICE_SET:
                         cfg["voice"] = payload["voice"]
                 changed = False
-                manual_colour = False
                 for key, value in payload.items():
                     if key not in PARAM_SPEC:
                         continue
                     v = coerce(key, value)
                     if v is None:
                         continue
-                    if key in ("hue", "hue2") and not payload.get("theme_hook"):
-                        manual_colour = True      # he picked colours himself
                     cfg["params"][key] = v
                     changed = True
                 if changed or "voice" in payload:
                     save_config(cfg)
-                # His own colour edit turns the theme hook off: the point of the hook is to
-                # follow the theme until he says otherwise, and a slider is him saying so.
-                if manual_colour:
-                    try:
-                        THEME_SYNC_OFF.parent.mkdir(parents=True, exist_ok=True)
-                        THEME_SYNC_OFF.write_text("manual colour edit\n", encoding="utf-8")
-                    except OSError:
-                        pass
+                # Colours changed by hand stay changed, but they do not switch the theme hook
+                # off: on the next theme change the hook nudges the hues again, and he can put
+                # his own back afterwards. `hermes-face-theme-sync off` is the real opt-out.
                 out = {"ok": True, "params": cfg["params"],
                        "voice": cfg["voice"], "theme_sync": not THEME_SYNC_OFF.exists(),
                        "rev": config_rev()}
