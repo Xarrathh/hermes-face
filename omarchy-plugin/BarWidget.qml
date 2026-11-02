@@ -3,11 +3,13 @@ import Quickshell
 import Quickshell.Io
 import qs.Ui
 
+
 // One bar slot that tells you what the face is doing without opening it:
 // a hollow ring at rest, a half ring while it thinks, a filled one while it
 // speaks, and a cross when the bridge is down or a turn failed. Left click
-// brings the face window forward (starting it if it is gone), right click
-// interrupts the live turn.
+// brings the face window forward (starting it if it is gone), right click opens
+// a menu with every action — a laptop touchpad has no middle button — and a
+// middle click still restarts the bridge for anyone with a mouse.
 BarWidget {
   id: root
   moduleName: "pierregoosen.hermes-face"
@@ -20,18 +22,21 @@ BarWidget {
   property string failure: ""
   property bool reachable: false
   property bool themeSync: true
+  property bool noAgent: false
 
   readonly property string glyph: !reachable ? "✕"
+    : noAgent ? "✕"
     : failure ? "✕"
     : agent === "speaking" ? "◉"
     : agent === "thinking" ? "◐"
     : "○"
 
-  readonly property string tip: (!reachable ? "Hermes face: bridge not running — click to start, middle click to restart"
-    : failure ? "Hermes face: " + failure + " — middle click to restart"
-    : agent === "speaking" ? "Hermes face: speaking" + (mood ? " (" + mood + ")" : "") + " — right click stops it, middle click restarts"
-    : agent === "thinking" ? "Hermes face: thinking — right click stops it, middle click restarts"
-    : "Hermes face: idle — click to open, middle click restarts")
+  readonly property string tip: (!reachable ? "Hermes face: bridge not running — click to start, right click for the menu"
+    : noAgent ? "Hermes face: the Hermes agent is not installed — install it or set HERMES_BIN, then restart"
+    : failure ? "Hermes face: " + failure + " — right click for the menu"
+    : agent === "speaking" ? "Hermes face: speaking" + (mood ? " (" + mood + ")" : "") + " — right click for the menu"
+    : agent === "thinking" ? "Hermes face: thinking — right click for the menu"
+    : "Hermes face: idle — click to open, right click for the menu")
     + (themeSync ? "" : " · theme sync off")
 
   visible: true
@@ -52,6 +57,7 @@ BarWidget {
           root.mood = String(s.mood || "")
           root.failure = String(s.error || "")
           root.themeSync = s.theme_sync !== false
+          root.noAgent = s.agent_cli === false
         } catch (e) {
           root.reachable = false
         }
@@ -75,7 +81,10 @@ BarWidget {
     active: root.reachable && !root.failure && (root.agent === "speaking" || root.agent === "thinking")
     tooltipText: root.tip
     onPressed: function (b) {
-      if (b === Qt.RightButton) root.bar.run(root.faceDir + "/bin/face-interrupt.sh")
+      // A laptop touchpad has no middle button, so nothing important may live only there.
+      // Left opens the face, right opens the Hermes menu through Omarchy's own menu plugin
+      // (a real menu, keyboard-navigable, not a widget popup), middle still restarts.
+      if (b === Qt.RightButton) root.bar.run(root.faceDir + "/bin/face-menu.sh")
       else if (b === Qt.MiddleButton) root.bar.run(root.faceDir + "/bin/face-restart.sh")
       else root.bar.run(root.faceDir + "/bin/face-focus.sh")
     }
