@@ -524,10 +524,20 @@ def synth(text: str, out: Path, voice: str | None = None) -> None:
     try:
         import edge_tts
     except ImportError:
+        # The CLI fallback writes the spoken text to a private file first: passing it as
+        # --text would put the conversation in the process arguments, where any local
+        # account can read it with ps.
         cli = shutil.which("edge-tts") or str(Path.home() / ".local/bin/edge-tts")
-        subprocess.run([cli, "--voice", said, "--rate=+4%", "--text", text,
-                        "--write-media", str(out)],
-                       check=True, capture_output=True, timeout=120)
+        snippet = AUDIO / f".tts-{os.getpid()}-{int(time.time() * 1000)}.txt"
+        try:
+            fd = os.open(snippet, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            subprocess.run([cli, "--voice", said, "--rate=+4%", "--file", str(snippet),
+                            "--write-media", str(out)],
+                           check=True, capture_output=True, timeout=120)
+        finally:
+            snippet.unlink(missing_ok=True)
         return
 
     async def run() -> None:
@@ -760,7 +770,9 @@ def load_history() -> dict:
 
 def save_history(h: dict) -> None:
     tmp = HISTORY.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(h, indent=1), encoding="utf-8")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps(h, indent=1))
     os.replace(tmp, HISTORY)
 
 
@@ -841,7 +853,9 @@ def run_turn(text: str, seq: int) -> None:
             new_sid = STATE["session"]
     else:
         qfile = AUDIO / f"q-{int(time.time() * 1000)}.txt"
-        qfile.write_text(PROMPT_PREFIX + heard, encoding="utf-8")
+        fd = os.open(qfile, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(PROMPT_PREFIX + heard)
         # -Q used to be the only programmatic mode, but it still lets a tool's own print
         # (a patch diff) onto stdout, and the face then spoke the code at him. Where the
         # CLI has --format stream-json, the turn speaks the protocol instead and the answer
@@ -851,9 +865,16 @@ def run_turn(text: str, seq: int) -> None:
         if caps["query_file"]:
             cmd += ["--query-file", str(qfile)]
         else:
-            # Pre-0.20 CLIs only take the prompt inline. Fine for a spoken line; the
-            # file exists either way so the cleanup path stays identical.
-            cmd += ["-q", PROMPT_PREFIX + heard]
+            # No inline fallback: `-q "<his words>"` puts the prompt in the process arguments,
+            # where any local account can read it. Refuse instead of leaking.
+            qfile.unlink(missing_ok=True)
+            reply = ("This Hermes CLI is too old to take a query file, so I will not pass your "
+                     "words on the command line. Update Hermes and try again.")
+            mood, reply = "concerned", reply
+            record_turn(heard, reply, sid or FACE_SESSION)
+            set_if_current(seq, agent="idle", reply=reply, mood=mood,
+                           error="hermes chat lacks --query-file")
+            return
         if caps["stream_json"]:
             cmd += ["--format", "stream-json", "--source", "tool"]
         else:
@@ -996,12 +1017,14 @@ class Handler(BaseHTTPRequestHandler):
         self._send(code, json.dumps(obj).encode(), "application/json")
 
     def _authorised(self) -> bool:
-        """Is this request from the desktop user himself?
+        """Is this request from the desktop user's own connection?
 
-        The token was the first answer, and it leaked: a secret passed in `curl` arguments or in
-        a browser URL is visible to every local account through `ps` on a box without hidepid.
-        So the check is now the kernel's own answer — who owns the socket — with the token kept
-        only as a fallback for setups where /proc is unreadable to the service.
+        Two earlier answers were wrong in instructive ways. A shared token leaked through argv
+        and browser URLs. Then checking only the local port and the socket's uid was foolable:
+        an attacker bound 127.0.0.2:9120 and connected, and the *server's own* accepted socket
+        (local 127.0.0.1:9120, our uid) matched that test. So the match is the whole 4-tuple —
+        the peer's address and port as we see them, the address and port we accepted on, and
+        the uid — which is the client's socket and nobody else's.
         """
         if self._peer_is_me():
             return True
@@ -1013,19 +1036,30 @@ class Handler(BaseHTTPRequestHandler):
                     break
         return bool(given) and hmac.compare_digest(given, TOKEN)
 
-    def _peer_is_me(self) -> bool:
-        """Match the connecting socket's ephemeral port to its owner in /proc/net/tcp{,6}.
-
-        Loopback means "this machine", not "this user": any local account can connect. The
-        socket's uid is the answer, and it never leaves the kernel, so there is nothing for
-        another account to read out of a command line.
-        """
+    @staticmethod
+    def _tcp_hex(ip: str, port: int) -> str:
+        """`/proc/net/tcp` spells an address as little-endian hex words, then the port."""
         try:
-            port = int(self.client_address[1])
-        except (TypeError, ValueError, IndexError):
+            parts = [int(p) for p in ip.split(".")]
+        except ValueError:
+            return ""
+        if len(parts) != 4:
+            return ""
+        # /proc prints each 32-bit word little-endian: 127.0.0.1 -> 0100007F
+        return "".join(f"{b:02X}" for b in reversed(parts)) + f":{port:04X}"
+
+    def _peer_is_me(self) -> bool:
+        """Full 4-tuple lookup of the client socket in /proc/net/tcp{,6}."""
+        try:
+            peer_ip, peer_port = self.client_address[0], int(self.client_address[1])
+            local_ip, local_port = self.connection.getsockname()[0], int(self.connection.getsockname()[1])
+        except (TypeError, ValueError, IndexError, AttributeError, OSError):
             return False
         me = os.getuid()
-        wanted = f"{port:04X}"
+        local = self._tcp_hex(peer_ip, peer_port)      # the client's own endpoint
+        remote = self._tcp_hex(local_ip, local_port)   # the endpoint it connected to
+        if not local or not remote:
+            return False
         for path in ("/proc/net/tcp", "/proc/net/tcp6"):
             try:
                 lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()[1:]
@@ -1033,12 +1067,9 @@ class Handler(BaseHTTPRequestHandler):
                 continue
             for line in lines:
                 f = line.split()
-                if len(f) < 8:
+                if len(f) < 8 or f[3] != "01":         # 01 = ESTABLISHED
                     continue
-                local = f[1]
-                if not local.endswith(":" + wanted):
-                    continue
-                if f[3] != "01":                       # 01 = ESTABLISHED
+                if not f[1].upper().endswith(local) or not f[2].upper().endswith(remote):
                     continue
                 try:
                     if int(f[7]) == me:
@@ -1114,6 +1145,16 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         if not self._authorised():
             return self._deny()
+        # Socket ownership says the browser is his; it does not say the request came from *his*
+        # page. A cross-site form post would otherwise reach /history/clear and /say, so require
+        # a JSON body (a form cannot send one) and, when the browser tells us, a same-origin
+        # referrer.
+        ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if ctype != "application/json":
+            return self._json({"error": "content-type must be application/json"}, 403)
+        origin = self.headers.get("Origin") or self.headers.get("Referer") or ""
+        if origin and not re.match(rf"^https?://(127\.0\.0\.1|localhost):{PORT}(/|$)", origin):
+            return self._json({"error": "cross-origin POST refused"}, 403)
         length = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(length) if length else b"{}"
         try:
@@ -1226,7 +1267,34 @@ class Handler(BaseHTTPRequestHandler):
         return self._json({"error": "not found"}, 404)
 
 
+def harden_permissions() -> None:
+    """Keep the prefix private to its owner.
+
+    history.json holds his conversations, config.json his tuned face, and the audio is his
+    speech; with a default umask and a traversable prefix those are readable by other local
+    accounts. This runs at every start so an install made under a looser umask gets fixed rather
+    than staying open.
+    """
+    for d in (HERE, AUDIO, WEB):
+        try:
+            os.chmod(d, 0o700)
+        except OSError:
+            pass
+    for f in (CONFIG, HISTORY, TOKEN_FILE, THEME_SYNC_OFF):
+        try:
+            os.chmod(f, 0o600)
+        except OSError:
+            pass
+    try:
+        for f in AUDIO.glob("*"):
+            if f.is_file():
+                os.chmod(f, 0o600)
+    except OSError:
+        pass
+
+
 def main() -> None:
+    harden_permissions()
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     srv.daemon_threads = True
     print(f"hermes-face on http://127.0.0.1:{PORT}/face/ (voice {load_config()['voice']})", flush=True)
