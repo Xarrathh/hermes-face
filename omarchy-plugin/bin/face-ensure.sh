@@ -79,6 +79,9 @@ install_extras() {
   mkdir -p "$HOME/.local/bin" "$HOME/.config/omarchy/hooks/theme-set.d" || return 0
   install -Dm755 "$PLUGIN_DIR/bin/hermes-face-stop" "$HOME/.local/bin/hermes-face-stop" 2>/dev/null || true
   install -Dm755 "$PLUGIN_DIR/bin/hermes-face-theme-sync" "$HOME/.local/bin/hermes-face-theme-sync" 2>/dev/null || true
+  # Without this the face has no window: face-focus.sh prefers the installed launcher and only
+  # falls back to a bare browser, which is not the locked-down kiosk the face expects.
+  install -Dm755 "$PLUGIN_DIR/bin/hermes-face-kiosk" "$HOME/.local/bin/hermes-face-kiosk" 2>/dev/null || true
   if [ -f "$PLUGIN_DIR/hooks/theme-set.d/hermes-face-theme.hook" ]; then
     cp -f "$PLUGIN_DIR/hooks/theme-set.d/hermes-face-theme.hook" \
           "$HOME/.config/omarchy/hooks/theme-set.d/hermes-face-theme.hook" 2>/dev/null || true
