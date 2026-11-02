@@ -10,6 +10,29 @@
   const panel = $('#panel');
   const saveState = $('#saveState');
 
+  /* --------------------------------------------------------------- token */
+  // The launcher opens this page with ?t=<prefix token>; the bridge refuses every private
+  // route without it, because another local account can reach loopback too. The token is
+  // moved out of the address bar immediately and injected into every request after that.
+  const TOKEN = (() => {
+    const m = location.search.match(/[?&]t=([^&]+)/);
+    if (!m) return '';
+    const t = decodeURIComponent(m[1]);
+    try { history.replaceState(null, '', location.pathname); } catch { /* old browser */ }
+    return t;
+  })();
+
+  const withToken = (u) => (TOKEN ? u + (u.includes('?') ? '&' : '?') + 't=' + encodeURIComponent(TOKEN) : u);
+
+  if (TOKEN) {
+    const realFetch = window.fetch.bind(window);
+    window.fetch = (url, opts = {}) => {
+      const o = { ...opts };
+      o.headers = { ...(opts.headers || {}), 'X-Face-Token': TOKEN };
+      return realFetch(url, o);
+    };
+  }
+
   let schema = null;
   let P = {};
   let saveTimer = 0;
@@ -467,7 +490,7 @@
   function nextChunk() {
     const url = q.shift();
     if (!url || !audioEl) return;
-    audioEl.src = url;
+    audioEl.src = withToken(url);
     audioEl.play().then(() => {
       cancelAnimationFrame(rafAmp);
       if (analyser) pumpAmp();

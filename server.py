@@ -11,9 +11,11 @@ chosen values so the face looks the same after a restart.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import os
 import re
+import secrets
 import shutil
 import signal
 import subprocess
@@ -28,6 +30,7 @@ AUDIO = HERE / "audio"
 AUDIO.mkdir(exist_ok=True)
 CONFIG = HERE / "config.json"
 THEME_SYNC_OFF = HERE / "theme-sync-off"      # flag: his colours beat the theme hook
+TOKEN_FILE = HERE / "token"                   # per-user secret; loopback alone is not isolation
 SCHEMA = WEB / "schema.json"
 PRESETS_FILE = WEB / "presets.json"
 
@@ -700,6 +703,33 @@ def voice_self_check() -> None:
         STATE["error"] = f"voice unavailable: {last}"
 
 
+def _load_token() -> str:
+    """The per-user secret that every request has to carry.
+
+    Binding to 127.0.0.1 does not isolate users: any local account can reach the loopback
+    port and read the conversation, submit turns to the agent, or clear the history. The token
+    lives in the prefix with mode 0600, so only the desktop user (and root) can read it.
+    """
+    try:
+        tok = TOKEN_FILE.read_text(encoding="utf-8").strip()
+        if len(tok) >= 20:
+            return tok
+    except OSError:
+        pass
+    tok = secrets.token_urlsafe(24)
+    try:
+        TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(TOKEN_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(tok + "\n")
+    except OSError:
+        pass
+    return tok
+
+
+TOKEN = _load_token()
+
+
 def _auto_idle_after(seconds: float, seq: int) -> None:
     """If the browser never reports playback (blocked autoplay, quiet sink, crash)
     the state must not stay 'speaking' and lock out the next turn."""
@@ -965,8 +995,27 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, obj, code: int = 200) -> None:
         self._send(code, json.dumps(obj).encode(), "application/json")
 
+    def _authorised(self) -> bool:
+        """A request is ours only if it carries the prefix token (header or ?t=)."""
+        given = self.headers.get("X-Face-Token", "")
+        if not given and "?" in self.path:
+            for part in self.path.split("?", 1)[1].split("&"):
+                if part.startswith("t="):
+                    given = part[2:]
+                    break
+        return bool(given) and hmac.compare_digest(given, TOKEN)
+
+    def _deny(self) -> None:
+        self._json({"error": "unauthorised",
+                    "hint": "open the face through its launcher so it can pass the token"}, 401)
+
     def do_GET(self) -> None:                      # noqa: N802
         path = self.path.split("?")[0]
+        # Only the health probe and the page's own static files are open; everything that
+        # carries his words, his speech or his agent needs the token.
+        if path not in ("/health", "/face", "/face/") and not path.startswith("/face/"):
+            if not self._authorised():
+                return self._deny()
         if path == "/face":
             self.send_response(302)
             self.send_header("Location", "/face/")
@@ -1021,6 +1070,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:                     # noqa: N802
         path = self.path.split("?")[0]
+        if not self._authorised():
+            return self._deny()
         length = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(length) if length else b"{}"
         try:

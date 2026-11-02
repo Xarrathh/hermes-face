@@ -40,7 +40,7 @@ BarWidget {
 
   Process {
     id: probe
-    command: ["curl", "-s", "--max-time", "2", root.stateUrl]
+    command: ["bash", root.faceDir + "/bin/face-state.sh"]
     stdout: StdioCollector {
       onStreamFinished: {
         var raw = String(text || "").trim()

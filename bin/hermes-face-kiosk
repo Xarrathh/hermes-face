@@ -19,6 +19,11 @@ set -u
 PORT="${HERMES_FACE_PORT:-9120}"
 UNIT="${HERMES_FACE_UNIT:-hermes-face.service}"
 URL="http://127.0.0.1:${PORT}/face/"
+# The page must be opened with the prefix token or the bridge refuses its own data routes.
+TOKEN_FILE="${HERMES_FACE_PREFIX:-$HOME/.local/share/hermes-face}/token"
+if [ -r "$TOKEN_FILE" ]; then
+  URL="$URL?t=$(head -1 "$TOKEN_FILE")"
+fi
 PROFILE="${HERMES_FACE_PROFILE:-${XDG_DATA_HOME:-$HOME/.local/share}/hermes-face-kiosk}"
 
 # One face at a time. This launcher can be reached from the Hyprland autostart line

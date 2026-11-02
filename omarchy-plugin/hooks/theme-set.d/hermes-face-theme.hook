@@ -81,7 +81,12 @@ if [ -z "${HUE:-}" ] || [ "${SAT:-0}" = "0" ]; then
 fi
 
 say "theme: ${THEME_NAME:-unknown} -> base $HUE/$SAT, highlight $HUE2/$SAT2"
-curl -s --max-time 3 -X POST -H 'content-type: application/json' \
+TOKEN=$(head -1 "$FACE_DIR/token" 2>/dev/null || true)
+if [ -z "$TOKEN" ]; then
+  say "theme: no bridge token in $FACE_DIR, colours not applied"
+  exit 0
+fi
+curl -s --max-time 3 -H "X-Face-Token: $TOKEN" -H 'content-type: application/json' \
   -d "{\"hue\": $HUE, \"sat\": $SAT, \"hue2\": $HUE2, \"sat2\": $SAT2, \"theme_hook\": true}" \
   http://127.0.0.1:9120/params >/dev/null 2>&1 || \
   say "theme: face not reachable, colours not applied"
