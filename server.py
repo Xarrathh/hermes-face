@@ -250,6 +250,9 @@ def hermes_caps() -> dict[str, bool]:
     caps["query_file"] = "--query-file" in out
     caps["create_if_missing"] = "--create-if-missing" in out
     caps["stream_json"] = "stream-json" in out
+    if os.environ.get("HERMES_FACE_FORCE_OLD_CLI") == "1":
+        # Test hook: exercise the pre-0.20 command line on a modern CLI.
+        caps = {"query_file": False, "create_if_missing": False, "stream_json": False}
     _CAPS.update(caps)
     return _CAPS
 
@@ -903,21 +906,22 @@ def run_turn(text: str, seq: int) -> None:
                            error="Hermes agent not found")
             return
 
+        inline_prompt = False
         cmd = [str(HERMES), "chat"]
         caps = hermes_caps()
         if caps["query_file"]:
             cmd += ["--query-file", str(qfile)]
         else:
-            # No inline fallback: `-q "<his words>"` puts the prompt in the process arguments,
-            # where any local account can read it. Refuse instead of leaking.
+            # An older CLI has no --query-file, and passing the prompt inline (`-q "<his words>"`)
+            # puts it in the process arguments where another local account can read it. Working is
+            # worth more than that margin here, so the words go inline on this box only, and the
+            # state carries a note saying so — the face tells him rather than refusing to answer.
             qfile.unlink(missing_ok=True)
-            reply = ("This Hermes CLI is too old to take a query file, so I will not pass your "
-                     "words on the command line. Update Hermes and try again.")
-            mood, reply = "concerned", reply
-            record_turn(heard, reply, sid or FACE_SESSION)
-            set_if_current(seq, agent="idle", reply=reply, mood=mood,
-                           error="hermes chat lacks --query-file")
-            return
+            cmd += ["-q", PROMPT_PREFIX + heard]
+            inline_prompt = True
+        if inline_prompt:
+            print("hermes-face: this Hermes CLI has no --query-file, so the spoken words appear in "
+                  "the process list; update Hermes to stop that", flush=True)
         if caps["stream_json"]:
             cmd += ["--format", "stream-json", "--source", "tool"]
         else:
