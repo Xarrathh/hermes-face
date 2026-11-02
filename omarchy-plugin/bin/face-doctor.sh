@@ -13,6 +13,17 @@ echo "  plugin  $HERE"
 echo "  prefix  $PREFIX"
 echo "  port    $PORT"
 
+# This plugin is a Quickshell bar widget. Omarchy 3 and earlier had a waybar/different bar with no
+# plugin API at all, and every later symptom (no glyph, no menu, nothing to click) follows from
+# that one fact, so it is checked first.
+omarchy_ver="$(cat /usr/share/omarchy/version 2>/dev/null || true)"
+if [ -x /usr/bin/omarchy-shell ] && [ -f /usr/share/omarchy/shell/Ui/BarWidget.qml ]; then
+  pass "Omarchy ${omarchy_ver:-unknown} with the Quickshell bar (bar widgets supported)"
+else
+  bad "this Omarchy has no Quickshell bar plugin API (found ${omarchy_ver:-no version file})" \
+      "the widget needs Omarchy 4; on an older release there is no bar to host it"
+fi
+
 command -v python3 >/dev/null 2>&1 && pass "python3 on PATH" || bad "python3 missing" "install python3"
 
 if [ -x "$PREFIX/.venv/bin/python" ]; then
