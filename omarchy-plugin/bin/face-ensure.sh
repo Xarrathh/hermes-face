@@ -23,6 +23,11 @@ healthy() { curl -sf -m 1 -o /dev/null "http://127.0.0.1:$PORT/health" 2>/dev/nu
 use_systemd() { command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1 && [ "$PORT" = "9120" ]; }
 
 mkdir -p "$PREFIX" || { say "ensure: cannot create $PREFIX"; exit 1; }
+MARKER="$PREFIX/.last-error"
+# The bar cannot read the log, so the reason a start failed is written where the widget's tooltip
+# can find it. Success clears it.
+fail() { printf '%s' "$1" >"$MARKER" 2>/dev/null || true; say "ensure: $1"; exit 1; }
+ok() { rm -f "$MARKER" 2>/dev/null || true; }
 
 vendor_hash() {
   ( cd "$PLUGIN_DIR/face" && { sha256sum server.py; ls web/* | sort | xargs sha256sum; } 2>/dev/null ) \
@@ -57,7 +62,7 @@ elif command -v python3 >/dev/null 2>&1 && python3 -c "import edge_tts" >/dev/nu
   PY="$(command -v python3)"
 else
   if [ ! -x "$PREFIX/.venv/bin/python" ]; then
-    python3 -m venv "$PREFIX/.venv" >/dev/null 2>&1 || { say "ensure: python3 -m venv failed"; exit 1; }
+    python3 -m venv "$PREFIX/.venv" >/dev/null 2>&1 || fail "python3 cannot create a virtual environment here (install python3-venv)"
   fi
   "$PREFIX/.venv/bin/pip" install --quiet --disable-pip-version-check edge-tts >/dev/null 2>&1
   "$PREFIX/.venv/bin/python" -c "import edge_tts" >/dev/null 2>&1 \
@@ -218,8 +223,11 @@ else
 fi
 
 for _ in $(seq 1 120); do
-  healthy && say "ensure: bridge is answering" && exit 0
+  healthy && say "ensure: bridge is answering" && ok && exit 0
   sleep 0.25
 done
-say "ensure: bridge did not answer within 30s"
-exit 1
+if use_systemd; then
+  state=$(systemctl --user is-active "$UNIT_NAME" 2>/dev/null || true)
+  fail "the bridge did not answer within 30s (unit is $state; see ~/.cache/hermes-face-bar.log and journalctl --user -u hermes-face)"
+fi
+fail "the bridge did not answer within 30s (see ~/.cache/hermes-face-bar.log)"

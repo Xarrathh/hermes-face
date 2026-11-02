@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "pierregoosen.hermes-face",
   "name": "Hermes Face",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "author": "Pierre-Johan Goosen",
   "license": "MIT",
   "description": "A live agent head on your bar. One glyph says idle, thinking, speaking or failed, and holds the three things you actually reach for: left click opens the face, right click stops it mid-sentence, middle click restarts the bridge. The face is a holographic head that listens through dictation and answers in your own Hermes agent's voice, and it ships inside this repository, so one install is the whole system.",
