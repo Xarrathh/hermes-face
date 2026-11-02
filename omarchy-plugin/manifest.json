@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "pierregoosen.hermes-face",
+  "name": "Hermes Face",
+  "version": "1.0.0",
+  "author": "Pierre-Johan Goosen",
+  "license": "MIT",
+  "description": "Shows what the Hermes face is doing (idle, thinking, speaking, failed) in the bar; click brings the face window forward, right click interrupts the turn.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Hermes face",
+    "description": "Live state of the holographic face: idle, thinking, speaking or failed.",
+    "category": "AI",
+    "aliases": ["face", "hermes"],
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

@@ -1,0 +1,20 @@
+[Unit]
+Description=Hermes face — kiosk window (Chromium, fullscreen)
+Documentation=file:@PREFIX@/INSTALL.md
+Wants=hermes-face.service
+After=graphical-session.target hermes-face.service
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+Environment="HERMES_FACE_PORT=@PORT@"
+Environment="HERMES_FACE_UNIT=hermes-face.service"
+Environment="HERMES_FACE_BROWSER=@BROWSER@"
+# uncomment on a box that has no compositor of its own and runs under cage:
+# ExecStart=/usr/bin/cage -s -- @BIN_DIR@/hermes-face-kiosk
+ExecStart=@BIN_DIR@/hermes-face-kiosk
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

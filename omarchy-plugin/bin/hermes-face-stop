@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Stop whatever the face is saying or doing, from a global keybinding.
+# Safe to press when nothing is running: the face refuses an interrupt with no live turn.
+set -u
+LOG="$HOME/.cache/hermes-face-bar.log"
+state=$(curl -s --max-time 2 http://127.0.0.1:9120/state) || exit 0
+agent=$(printf '%s' "$state" | grep -o '"agent": "[a-z]*"' | head -1 | cut -d'"' -f4)
+if [ -z "$agent" ]; then
+  exit 0
+fi
+if [ "$agent" = "idle" ]; then
+  printf '%s %s\n' "$(date '+%F %T')" "stop-hotkey: nothing running" >>"$LOG"
+  exit 0
+fi
+curl -s --max-time 3 -X POST -H 'content-type: application/json' -d '{}' \
+  http://127.0.0.1:9120/interrupt >/dev/null 2>&1
+printf '%s %s\n' "$(date '+%F %T')" "stop-hotkey: stopped a turn (was $agent)" >>"$LOG"

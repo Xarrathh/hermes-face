@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Turn the theme hook on or off for the Hermes face. Off leaves your own colours alone
+# forever; on means each theme switch nudges the face's hues to match it.
+set -u
+FLAG="$HOME/.local/share/hermes-face/theme-sync-off"
+case "${1:-}" in
+  on)  rm -f "$FLAG"; echo "hermes-face: theme sync on" ;;
+  off) : > "$FLAG";  echo "hermes-face: theme sync off (your colours win)" ;;
+  *)   if [ -e "$FLAG" ]; then echo "hermes-face: theme sync off"; else echo "hermes-face: theme sync on"; fi
+       echo "usage: hermes-face-theme-sync [on|off]" ;;
+esac
