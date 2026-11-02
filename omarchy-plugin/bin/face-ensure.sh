@@ -65,13 +65,49 @@ else
   PY="$PREFIX/.venv/bin/python"
 fi
 
-if healthy && [ "$CHANGED" = "0" ]; then
+agent_binary() {
+  # Do not trust the caller's PATH: the bar launches this with a different environment than a
+  # login shell, and `command -v` then finds nothing even though hermes is installed.
+  local cand
+  for cand in "$(command -v hermes 2>/dev/null || true)" \
+              "$HOME/.local/bin/hermes" \
+              "$HOME/.hermes/bin/hermes" \
+              "$HOME/.hermes/hermes-agent/.hermes/bin/hermes" \
+              /usr/local/bin/hermes /usr/bin/hermes; do
+    if [ -n "$cand" ] && [ -x "$cand" ]; then
+      readlink -f "$cand" 2>/dev/null || printf '%s\n' "$cand"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# An existing install whose unit predates the PATH/HERMES_BIN pinning must be repaired even when
+# the code itself has not changed, or it keeps reporting a missing agent forever.
+NEED_UNIT=0
+if use_systemd; then
+  [ -f "$UNIT" ] || NEED_UNIT=1
+  grep -q "^Environment=PATH=" "$UNIT" 2>/dev/null || NEED_UNIT=1
+  if [ "$NEED_UNIT" = "0" ] && agent_binary >/dev/null 2>&1 \
+     && ! grep -q "^Environment=HERMES_BIN=" "$UNIT" 2>/dev/null; then
+    NEED_UNIT=1
+  fi
+fi
+
+if healthy && [ "$CHANGED" = "0" ] && [ "$NEED_UNIT" = "0" ]; then
   exit 0                       # nothing to do, and no turn interrupted
 fi
 
 write_unit() {
   mkdir -p "$(dirname "$UNIT")"
-  cat > "$UNIT" <<EOF
+  # A systemd user unit inherits a bare PATH, so a hermes in ~/.local/bin (or a pipx/venv install)
+  # is invisible to the bridge and it wrongly reports "agent not found". Pin both the PATH and,
+  # when this script can see one, the exact binary.
+  local agent_bin=""
+  agent_bin="$(agent_binary || true)"
+  say "ensure: agent binary ${agent_bin:-not found}"
+  {
+    cat <<EOF
 [Unit]
 Description=Hermes face - holographic agent head bridge (127.0.0.1:$PORT)
 After=graphical-session.target
@@ -82,22 +118,26 @@ WorkingDirectory=$PREFIX
 ExecStart=$PY $PREFIX/server.py
 Environment=HERMES_FACE_PORT=$PORT
 Environment=PYTHONUNBUFFERED=1
+Environment=PATH=$HOME/.local/bin:$HOME/.hermes/bin:/usr/local/bin:/usr/bin:/bin
+EOF
+    [ -n "$agent_bin" ] && printf 'Environment=HERMES_BIN=%s\n' "$agent_bin"
+    cat <<EOF
 Restart=always
 RestartSec=2
 
 [Install]
 WantedBy=default.target
 EOF
+  } > "$UNIT"
   systemctl --user daemon-reload >/dev/null 2>&1 || true
   systemctl --user enable "$UNIT_NAME" >/dev/null 2>&1 || true
 }
 
 if use_systemd; then
-  # A unit left over from an earlier install may point at an interpreter that no longer exists,
-  # so rewrite it whenever it is missing or names the wrong python.
-  if [ ! -f "$UNIT" ] || ! grep -q "^ExecStart=$PY $PREFIX/server.py$" "$UNIT" 2>/dev/null; then
-    write_unit
-  fi
+  # Rewrite the unit whenever we are about to restart anyway: it pins the interpreter, the PATH
+  # and the agent binary this script can see, and a stale unit is exactly how a working install
+  # ends up reporting that it cannot find hermes.
+  write_unit
   say "ensure: restarting $UNIT_NAME to run the installed code"
   systemctl --user restart "$UNIT" >/dev/null 2>&1 || true
 else

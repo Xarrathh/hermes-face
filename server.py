@@ -37,21 +37,42 @@ PRESETS_FILE = WEB / "presets.json"
 HERMES_HOME = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
 
 
+def _hermes_candidates() -> list[Path]:
+    """Every place an agent CLI plausibly lives on a fresh box.
+
+    The systemd user unit runs with a default PATH (/usr/local/bin:/usr/bin:/bin), so a hermes
+    installed into ~/.local/bin is invisible to `shutil.which` there — which is exactly how a box
+    with a working agent ends up reporting "not found". Probe the usual prefixes explicitly, then
+    fall back to PATH.
+    """
+    out: list[Path] = []
+    for name in ("hermes", "hermes-agent"):
+        found = shutil.which(name)
+        if found:
+            out.append(Path(found))
+    for base in (Path.home() / ".local/bin", Path.home() / ".hermes/bin",
+                 Path.home() / ".hermes/hermes-agent/.hermes/bin",
+                 Path("/usr/local/bin"), Path("/usr/bin"), Path("/opt/hermes/bin"),
+                 Path.home() / ".cargo/bin", Path.home() / ".local/share/pipx/venvs/hermes-agent/bin"):
+        out.append(base / "hermes")
+    return out
+
+
 def _resolve_hermes() -> Path:
     """Where the agent CLI lives, without assuming this machine's layout.
 
-    HERMES_BIN wins if set; otherwise the known in-repo install, then anything on
-    PATH, so a fresh box is a config change rather than a code change.
+    HERMES_BIN wins if set — that is also how the unit pins the answer it found at install time.
     """
     env = os.environ.get("HERMES_BIN")
     if env:
         return Path(env)
-    for cand in (HERMES_HOME / "hermes-agent/.hermes/bin/hermes",
-                 HERMES_HOME / "bin/hermes"):
-        if cand.is_file() and os.access(cand, os.X_OK):
-            return cand
-    found = shutil.which("hermes")
-    return Path(found) if found else HERMES_HOME / "hermes-agent/.hermes/bin/hermes"
+    for cand in _hermes_candidates():
+        try:
+            if cand.is_file() and os.access(cand, os.X_OK):
+                return cand
+        except OSError:
+            continue
+    return HERMES_HOME / "hermes-agent/.hermes/bin/hermes"
 
 
 HERMES = _resolve_hermes()
@@ -1155,7 +1176,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/history":
             return self._json(load_history())
         if path == "/health":
-            return self._json({"ok": True, "agent": hermes_available(), "agent_cmd": str(HERMES)})
+            return self._json({"ok": True, "agent": hermes_available(), "agent_cmd": str(HERMES),
+                               "agent_checked": [str(p) for p in _hermes_candidates()][:8]})
         if path.startswith("/audio/"):
             name = os.path.basename(path)
             f = AUDIO / name
