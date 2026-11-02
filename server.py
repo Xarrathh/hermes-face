@@ -500,7 +500,18 @@ def snapshot() -> dict:
     s["rev"] = config_rev()
     s["build"] = page_build()
     s["theme_sync"] = not THEME_SYNC_OFF.exists()
+    # The face cannot think without its agent, and that is a prerequisite the user has to install
+    # themselves. Say so in the state so the bar can, instead of showing a silent idle face.
+    s["agent_cli"] = hermes_available()
+    s["agent_cmd"] = str(HERMES)
     return s
+
+
+def hermes_available() -> bool:
+    try:
+        return HERMES.is_file() and os.access(HERMES, os.X_OK)
+    except OSError:
+        return False
 
 
 # --------------------------------------------------------------------- speech
@@ -860,6 +871,17 @@ def run_turn(text: str, seq: int) -> None:
         # (a patch diff) onto stdout, and the face then spoke the code at him. Where the
         # CLI has --format stream-json, the turn speaks the protocol instead and the answer
         # comes from the result record alone.
+        if not hermes_available():
+            # The agent is a prerequisite, not a dependency we can install: say which binary is
+            # missing rather than failing inside Popen with a traceback in the log.
+            qfile.unlink(missing_ok=True)
+            reply = ("I have no Hermes agent to think with. Install Hermes, or point HERMES_BIN at "
+                     "its command, and I will answer.")
+            record_turn(heard, reply, sid or FACE_SESSION)
+            set_if_current(seq, agent="idle", reply=reply, mood="concerned",
+                           error="Hermes agent not found")
+            return
+
         cmd = [str(HERMES), "chat"]
         caps = hermes_caps()
         if caps["query_file"]:
@@ -1133,7 +1155,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/history":
             return self._json(load_history())
         if path == "/health":
-            return self._json({"ok": True})
+            return self._json({"ok": True, "agent": hermes_available(), "agent_cmd": str(HERMES)})
         if path.startswith("/audio/"):
             name = os.path.basename(path)
             f = AUDIO / name
