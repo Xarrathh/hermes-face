@@ -205,6 +205,21 @@ if use_systemd; then
   # and the agent binary this script can see, and a stale unit is exactly how a working install
   # ends up reporting that it cannot find hermes.
   write_unit
+  # A process that already holds the port but is not the unit's main process makes the unit die
+  # with "address already in use" on every restart — the bar then shows a cross while something
+  # else answers on the port, which is the most misleading failure of the lot.
+  if healthy; then
+    holder=$(ss -ltnp 2>/dev/null | grep ":$PORT " | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2)
+    mainpid=$(systemctl --user show -p MainPID --value "$UNIT_NAME" 2>/dev/null)
+    if [ -n "${holder:-}" ] && [ "$holder" != "${mainpid:-}" ]; then
+      say "ensure: port $PORT held by pid $holder, not the unit ($mainpid) — stopping it"
+      kill "$holder" 2>/dev/null || true
+      for _ in $(seq 1 40); do
+        ss -ltn 2>/dev/null | grep -q ":$PORT " || break
+        sleep 0.25
+      done
+    fi
+  fi
   say "ensure: restarting $UNIT_NAME to run the installed code"
   systemctl --user restart "$UNIT" >/dev/null 2>&1 || true
 else
