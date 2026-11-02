@@ -1,0 +1,650 @@
+{
+ "_comment": "Single source of truth for the face. Server validates against this, the page builds its editor from it. Units: u in [-1,1] across the head width, v in [0,1] crown->chin.",
+ "groups": [
+  {
+   "id": "head",
+   "label": "Head",
+   "params": [
+    {
+     "key": "faceShape",
+     "label": "Face shape",
+     "kind": "select",
+     "options": [
+      "Oval",
+      "Round",
+      "Heart",
+      "Long"
+     ],
+     "default": 0
+    },
+    {
+     "key": "headWidth",
+     "label": "Width",
+     "min": 0.8,
+     "max": 1.2,
+     "step": 0.005,
+     "default": 1.0
+    },
+    {
+     "key": "headLength",
+     "label": "Length",
+     "min": 0.7,
+     "max": 1.3,
+     "step": 0.005,
+     "default": 1.0
+    },
+    {
+     "key": "cranium",
+     "label": "Cranium",
+     "min": 0.85,
+     "max": 1.15,
+     "step": 0.005,
+     "default": 1.0
+    },
+    {
+     "key": "cheekbone",
+     "label": "Cheekbones",
+     "min": 0.85,
+     "max": 1.15,
+     "step": 0.005,
+     "default": 1.0
+    },
+    {
+     "key": "jawWidth",
+     "label": "Jaw width",
+     "min": 0.6,
+     "max": 1.05,
+     "step": 0.005,
+     "default": 1.02
+    },
+    {
+     "key": "chinWidth",
+     "label": "Chin width",
+     "min": 0.55,
+     "max": 1.2,
+     "step": 0.005,
+     "default": 1.1
+    },
+    {
+     "key": "chinLength",
+     "label": "Chin length",
+     "min": 0.8,
+     "max": 1.25,
+     "step": 0.005,
+     "default": 1.0
+    },
+    {
+     "key": "forehead",
+     "label": "Forehead",
+     "min": 0.5,
+     "max": 1.5,
+     "step": 0.01,
+     "default": 1.0
+    },
+    {
+     "key": "transparency",
+     "label": "Feature opacity",
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01,
+     "default": 1.0
+    }
+   ]
+  },
+  {
+   "id": "eyes",
+   "label": "Eyes",
+   "params": [
+    {
+     "key": "eyeY",
+     "label": "Eye line",
+     "min": 0.44,
+     "max": 0.57,
+     "step": 0.002,
+     "default": 0.465
+    },
+    {
+     "key": "eyeU",
+     "label": "Spacing",
+     "min": 0.28,
+     "max": 0.5,
+     "step": 0.002,
+     "default": 0.425
+    },
+    {
+     "key": "eyeW",
+     "label": "Size",
+     "min": 0.28,
+     "max": 0.54,
+     "step": 0.002,
+     "default": 0.465
+    },
+    {
+     "key": "eyeOpen",
+     "label": "Opening",
+     "min": 0.5,
+     "max": 1.7,
+     "step": 0.005,
+     "default": 1.02
+    },
+    {
+     "key": "eyeTilt",
+     "label": "Tilt",
+     "min": -0.3,
+     "max": 0.3,
+     "step": 0.005,
+     "default": 0.06
+    },
+    {
+     "key": "irisSize",
+     "label": "Iris",
+     "min": 0.55,
+     "max": 1.6,
+     "step": 0.005,
+     "default": 1.25
+    },
+    {
+     "key": "pupilSize",
+     "label": "Pupil",
+     "min": 0.2,
+     "max": 0.75,
+     "step": 0.005,
+     "default": 0.4
+    },
+    {
+     "key": "eyeGlow",
+     "label": "Iris glow",
+     "min": 0,
+     "max": 1,
+     "step": 0.01,
+     "default": 1.0,
+     "_comment": "1 is the hologram iris, lit from inside. 0 is a matte iris that sits darker than the sclera, which is what a real eye does"
+    },
+    {
+     "key": "lashes",
+     "label": "Lashes",
+     "min": 0.0,
+     "max": 2.0,
+     "step": 0.01,
+     "default": 0.9
+    },
+    {
+     "key": "lashLength",
+     "label": "Lash length",
+     "min": 0.4,
+     "max": 2.0,
+     "step": 0.01,
+     "default": 1.0
+    }
+   ]
+  },
+  {
+   "id": "brows",
+   "label": "Brows",
+   "params": [
+    {
+     "key": "browHeight",
+     "label": "Height",
+     "min": 0.02,
+     "max": 0.11,
+     "step": 0.002,
+     "default": 0.056
+    },
+    {
+     "key": "browThickness",
+     "label": "Thickness",
+     "min": 0.3,
+     "max": 2.0,
+     "step": 0.01,
+     "default": 1.35
+    },
+    {
+     "key": "browLength",
+     "label": "Length",
+     "min": 0.7,
+     "max": 1.45,
+     "step": 0.005,
+     "default": 1.1
+    },
+    {
+     "key": "browArch",
+     "label": "Arch",
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01,
+     "default": 0.5
+    },
+    {
+     "key": "browSlant",
+     "label": "Slant",
+     "min": -0.6,
+     "max": 0.6,
+     "step": 0.01,
+     "default": 0.0
+    }
+   ]
+  },
+  {
+   "id": "nose",
+   "label": "Nose",
+   "params": [
+    {
+     "key": "noseTop",
+     "label": "Root",
+     "min": 0.44,
+     "max": 0.58,
+     "step": 0.002,
+     "default": 0.488
+    },
+    {
+     "key": "noseLength",
+     "label": "Length",
+     "min": 0.1,
+     "max": 0.26,
+     "step": 0.002,
+     "default": 0.17
+    },
+    {
+     "key": "noseWidth",
+     "label": "Width",
+     "min": 0.08,
+     "max": 0.32,
+     "step": 0.002,
+     "default": 0.205
+    },
+    {
+     "key": "noseShade",
+     "label": "Contour",
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01,
+     "default": 0.55
+    },
+    {
+     "key": "nostril",
+     "label": "Nostrils",
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01,
+     "default": 0.65
+    }
+   ]
+  },
+  {
+   "id": "mouth",
+   "label": "Mouth",
+   "params": [
+    {
+     "key": "mouthY",
+     "label": "Height",
+     "min": 0.72,
+     "max": 0.87,
+     "step": 0.002,
+     "default": 0.778
+    },
+    {
+     "key": "mouthWidth",
+     "label": "Width",
+     "min": 0.14,
+     "max": 0.36,
+     "step": 0.002,
+     "default": 0.185
+    },
+    {
+     "key": "lipFullness",
+     "label": "Lips",
+     "min": 0.4,
+     "max": 1.9,
+     "step": 0.01,
+     "default": 1.15
+    },
+    {
+     "key": "smile",
+     "label": "Smile",
+     "min": -0.5,
+     "max": 0.6,
+     "step": 0.01,
+     "default": 0.08
+    },
+    {
+     "key": "cupid",
+     "label": "Cupid's bow",
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01,
+     "default": 0.55
+    },
+    {
+     "key": "lipGloss",
+     "label": "Lip gloss",
+     "min": 0.0,
+     "max": 2.0,
+     "step": 0.01,
+     "default": 1.0
+    }
+   ]
+  },
+  {
+   "id": "ears",
+   "label": "Ears",
+   "params": [
+    {
+     "key": "earY",
+     "label": "Height",
+     "min": 0.36,
+     "max": 0.56,
+     "step": 0.002,
+     "default": 0.44
+    },
+    {
+     "key": "earSize",
+     "label": "Size",
+     "min": 0.5,
+     "max": 1.7,
+     "step": 0.005,
+     "default": 1.1
+    },
+    {
+     "key": "earOut",
+     "label": "Protrusion",
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01,
+     "default": 0.55
+    },
+    {
+     "key": "earTilt",
+     "label": "Tilt",
+     "min": -0.4,
+     "max": 0.4,
+     "step": 0.005,
+     "default": 0.1
+    }
+   ]
+  },
+  {
+   "id": "colour",
+   "label": "Colour",
+   "params": [
+    {
+     "key": "hue",
+     "label": "Hue",
+     "min": 0,
+     "max": 360,
+     "step": 1,
+     "default": 141
+    },
+    {
+     "key": "sat",
+     "label": "Saturation",
+     "min": 0,
+     "max": 1,
+     "step": 0.01,
+     "default": 0.88
+    },
+    {
+     "key": "hue2",
+     "label": "Highlight hue",
+     "min": 0,
+     "max": 360,
+     "step": 1,
+     "default": 141,
+     "_comment": "shadows use Hue, highlights drift to this one: warm skin over cool shadow is most of what makes a face read as skin"
+    },
+    {
+     "key": "sat2",
+     "label": "Highlight sat",
+     "min": 0,
+     "max": 1,
+     "step": 0.01,
+     "default": 0.88
+    }
+   ]
+  },
+  {
+   "id": "cells",
+   "label": "Cells",
+   "params": [
+    {
+     "key": "matPitch",
+     "label": "Cells across",
+     "min": 24,
+     "max": 180,
+     "step": 1,
+     "default": 90
+    },
+    {
+     "key": "matExposure",
+     "label": "Exposure",
+     "min": 0.4,
+     "max": 4.0,
+     "step": 0.05,
+     "default": 1.0
+    },
+    {
+     "key": "matBlack",
+     "label": "Black point",
+     "min": 0.0,
+     "max": 0.45,
+     "step": 0.005,
+     "default": 0.06
+    },
+    {
+     "key": "matWhite",
+     "label": "White point",
+     "min": 0.1,
+     "max": 1.2,
+     "step": 0.005,
+     "default": 0.8
+    },
+    {
+     "key": "matSpec",
+     "label": "Highlight white",
+     "min": 0,
+     "max": 1,
+     "step": 0.01,
+     "default": 1.0,
+     "_comment": "1 lets the brightest cells burn out to white like a specular; 0 keeps them the highlight hue, which is what skin needs -- a lit forehead is not a white blob"
+    },
+    {
+     "key": "matLevels",
+     "label": "Tone bands",
+     "min": 1,
+     "max": 9,
+     "step": 1,
+     "default": 1
+    },
+    {
+     "key": "matRound",
+     "label": "3D falloff",
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01,
+     "default": 0.7
+    },
+    {
+     "key": "matSculpt",
+     "label": "Relief",
+     "min": 0.0,
+     "max": 1.5,
+     "step": 0.01,
+     "default": 1.0
+    },
+    {
+     "key": "matLight",
+     "label": "Key light",
+     "min": 0.0,
+     "max": 2.0,
+     "step": 0.01,
+     "default": 1.0
+    },
+    {
+     "key": "matLightY",
+     "label": "Key height",
+     "min": 0.05,
+     "max": 0.6,
+     "step": 0.005,
+     "default": 0.24
+    },
+    {
+     "key": "matLightSpread",
+     "label": "Key spread",
+     "min": 0.15,
+     "max": 0.6,
+     "step": 0.005,
+     "default": 0.38
+    },
+    {
+     "key": "matGain",
+     "label": "Cell texture",
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01,
+     "default": 0.8
+    },
+    {
+     "key": "matAO",
+     "label": "Socket & crease depth",
+     "min": 0,
+     "max": 2,
+     "step": 0.01,
+     "default": 1.0,
+     "_comment": "scales the shadows that do the anatomical work: eye sockets, under the nose, the mouth seam"
+    },
+    {
+     "key": "matLightX",
+     "label": "Key light across",
+     "min": -1,
+     "max": 1,
+     "step": 0.01,
+     "default": 0.0,
+     "_comment": "0 is the frontal bloom; negative lights from the viewer's left, which puts a shadow on the far cheek and gives the head a form"
+    },
+    {
+     "key": "matRim",
+     "label": "Rim light",
+     "min": 0,
+     "max": 1,
+     "step": 0.01,
+     "default": 0.0
+    }
+   ]
+  },
+  {
+   "id": "crt",
+   "label": "Rain & CRT",
+   "params": [
+    {
+     "key": "matRain",
+     "label": "Rain in front",
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01,
+     "default": 0.45
+    },
+    {
+     "key": "matRainSpeed",
+     "label": "Rain speed",
+     "min": 0.2,
+     "max": 3.0,
+     "step": 0.01,
+     "default": 1.0
+    },
+    {
+     "key": "matRainDensity",
+     "label": "Rain density",
+     "min": 0.5,
+     "max": 2.2,
+     "step": 0.01,
+     "default": 1.0
+    },
+    {
+     "key": "matScan",
+     "label": "CRT scanlines",
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01,
+     "default": 0.4
+    },
+    {
+     "key": "matVignette",
+     "label": "Vignette",
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01,
+     "default": 0.55
+    }
+   ]
+  },
+  {
+   "id": "motion",
+   "label": "Motion",
+   "params": [
+    {
+     "key": "breath",
+     "label": "Breathing",
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01,
+     "default": 0.6
+    },
+    {
+     "key": "headTurn",
+     "label": "Head movement",
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01,
+     "default": 0.6
+    },
+    {
+     "key": "blinkRate",
+     "label": "Blink rate",
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01,
+     "default": 0.5
+    },
+    {
+     "key": "gaze",
+     "label": "Gaze wander",
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01,
+     "default": 0.55
+    },
+    {
+     "key": "jawDrop",
+     "label": "Jaw on speak",
+     "min": 0.4,
+     "max": 1.6,
+     "step": 0.01,
+     "default": 1.0
+    },
+    {
+     "key": "browMotion",
+     "label": "Brow motion",
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01,
+     "default": 0.65
+    },
+    {
+     "key": "nostrilFlare",
+     "label": "Nostril flare",
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01,
+     "default": 0.6
+    },
+    {
+     "key": "earMotion",
+     "label": "Ear motion",
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01,
+     "default": 0.5
+    }
+   ]
+  }
+ ]
+}

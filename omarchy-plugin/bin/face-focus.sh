@@ -34,6 +34,8 @@ if hyprctl clients -j 2>/dev/null | grep -q "\"class\": \"$CLASS\""; then
   say "focus: focused existing window on $(hyprctl activeworkspace -j 2>/dev/null | grep -o '"id": [0-9]*' | head -1)"
 else
   URL="http://127.0.0.1:${HERMES_FACE_PORT:-9120}/face/"
+  # The menu's "Edit the look" asks for the settings drawer to be open on arrival.
+  [ "${HERMES_FACE_EDIT:-0}" = "1" ] && URL="${URL}?edit=1"
   LAUNCH="$HOME/.local/bin/hermes-face-kiosk"
   if [ -x "$LAUNCH" ]; then
     setsid "$LAUNCH" --app >/dev/null 2>&1 &

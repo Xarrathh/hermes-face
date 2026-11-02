@@ -89,6 +89,33 @@ install_extras() {
     } >> "$binds" 2>/dev/null || true
     say "ensure: added SUPER+SHIFT+H to $binds (backup at $binds.hermes-face.bak)"
   fi
+  # The Omarchy menu reads exactly one user file, ~/.config/omarchy/extensions/omarchy-menu.jsonc,
+  # so our entries are merged into it (backup kept, never duplicated) rather than dropped in as a
+  # file of their own that nothing would read.
+  local menu_file="$HOME/.config/omarchy/extensions/omarchy-menu.jsonc"
+  local entries="$PLUGIN_DIR/menu/hermes-face.entries.jsonc"
+  mkdir -p "$(dirname "$menu_file")" 2>/dev/null || true
+  if [ -f "$entries" ] && ! grep -q '^[[:space:]]*"hermes"' "$menu_file" 2>/dev/null; then
+    if [ -f "$menu_file" ]; then
+      cp -f "$menu_file" "$menu_file.hermes-face.bak" 2>/dev/null || true
+      # Insert before the final brace, adding the comma only when the object already has entries.
+      "$PY" - "$menu_file" "$entries" <<'PYEOF' 2>/dev/null || true
+import sys
+target, extra = sys.argv[1], sys.argv[2]
+body = open(target, encoding="utf-8").read()
+add = open(extra, encoding="utf-8").read()
+cut = body.rstrip().rfind("}")
+if cut < 0:
+    sys.exit(1)
+head, tail = body[:cut].rstrip(), body[cut:]
+sep = "" if head.endswith("{") else ","
+open(target, "w", encoding="utf-8").write(head + sep + "\n" + add.strip("\n") + "\n" + tail)
+PYEOF
+      say "ensure: merged the Hermes menu into $menu_file"
+    else
+      cp -f "$entries" "$menu_file" 2>/dev/null || true
+    fi
+  fi
   : > "$marker"
   say "ensure: installed the stop key, theme hook and sync helper"
 }
