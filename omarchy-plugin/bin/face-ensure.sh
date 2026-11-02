@@ -65,6 +65,36 @@ else
   PY="$PREFIX/.venv/bin/python"
 fi
 
+install_extras() {
+  # Everything that used to be homework. These are additive files in the user's own directories
+  # plus one keybinding, so a first start leaves a complete install rather than a README of
+  # instructions. Run once: the marker stops a user's deliberate removal from being undone.
+  local marker="$PREFIX/.extras-installed"
+  [ -f "$marker" ] && return 0
+  mkdir -p "$HOME/.local/bin" "$HOME/.config/omarchy/hooks/theme-set.d" || return 0
+  install -Dm755 "$PLUGIN_DIR/bin/hermes-face-stop" "$HOME/.local/bin/hermes-face-stop" 2>/dev/null || true
+  install -Dm755 "$PLUGIN_DIR/bin/hermes-face-theme-sync" "$HOME/.local/bin/hermes-face-theme-sync" 2>/dev/null || true
+  if [ -f "$PLUGIN_DIR/hooks/theme-set.d/hermes-face-theme.hook" ]; then
+    cp -f "$PLUGIN_DIR/hooks/theme-set.d/hermes-face-theme.hook" \
+          "$HOME/.config/omarchy/hooks/theme-set.d/hermes-face-theme.hook" 2>/dev/null || true
+  fi
+  # One binding, appended, never rewritten: the stop key is the only control that has nowhere
+  # else to live. A backup is left beside the file and the line is only added when absent.
+  local binds="$HOME/.config/hypr/bindings.lua"
+  if [ -f "$binds" ] && ! grep -q "hermes-face-stop" "$binds" 2>/dev/null; then
+    cp -f "$binds" "$binds.hermes-face.bak" 2>/dev/null || true
+    {
+      printf '\n-- Hermes face: stop the live turn and its voice (added by the plugin)\n'
+      printf 'o.bind("SUPER + SHIFT + H", "Stop the Hermes face", "hermes-face-stop")\n'
+    } >> "$binds" 2>/dev/null || true
+    say "ensure: added SUPER+SHIFT+H to $binds (backup at $binds.hermes-face.bak)"
+  fi
+  : > "$marker"
+  say "ensure: installed the stop key, theme hook and sync helper"
+}
+
+install_extras
+
 agent_binary() {
   # Do not trust the caller's PATH: the bar launches this with a different environment than a
   # login shell, and `command -v` then finds nothing even though hermes is installed.

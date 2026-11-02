@@ -125,6 +125,12 @@ FLAGS=(
   --ozone-platform-hint=auto
   --check-for-update-interval=31536000
   --password-store=basic
+  # Keep polling when the face is not the focused window. Chromium throttles timers in a
+  # backgrounded or occluded window, so after switching workspaces the page stops asking for
+  # state, misses a moment when the bridge restarts, and comes back wearing a failure label.
+  --disable-background-timer-throttling
+  --disable-backgrounding-occluded-windows
+  --disable-renderer-backgrounding
 )
 
 if [ "$MODE" = "--app" ]; then
