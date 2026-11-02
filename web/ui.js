@@ -348,6 +348,53 @@
     queueSave();
   });
 
+  /* ---------------------------------------------------------- random face */
+  // Roll every setting in the schema at once: sliders get a value inside their own range,
+  // snapped to their own step, and choices get one of their options. Clamped and rounded on
+  // purpose — the server refuses a config it cannot parse, and one stray NaN would leave the
+  // face blank until the next good save.
+  function snapTo(v, step) {
+    const s = Number(step);
+    if (!Number.isFinite(s) || s <= 0) return Number(v.toFixed(3));
+    return Number((Math.round(v / s) * s).toFixed(6));
+  }
+
+  function randomParams() {
+    const next = defaults();
+    for (const g of schema.groups) {
+      for (const p of g.params) {
+        if (p.kind === 'select') {
+          const n = (p.options || []).length;
+          next[p.key] = n ? Math.floor(Math.random() * n) : Number(p.default) || 0;
+          continue;
+        }
+        const lo = Number(p.min ?? 0);
+        const hi = Number(p.max ?? 1);
+        if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) {
+          next[p.key] = p.default;
+          continue;
+        }
+        next[p.key] = snapTo(lo + Math.random() * (hi - lo), p.step);
+      }
+    }
+    return next;
+  }
+
+  function randomiseFace() {
+    P = randomParams();
+    api().setParams(P);
+    syncInputs();
+    applyEffectGate();
+    queueSave();
+    saveState.textContent = 'rolled a new face';
+    setTimeout(() => {
+      if (saveState.textContent === 'rolled a new face') saveState.textContent = 'saved';
+    }, 1600);
+  }
+
+  const rollBtn = $('#randomFace');
+  if (rollBtn) rollBtn.addEventListener('click', randomiseFace);
+
   /* ------------------------------------------------------------ history */
   const histPanel = $('#histPanel');
   function fmtTime(ts) {
