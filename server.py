@@ -996,7 +996,15 @@ class Handler(BaseHTTPRequestHandler):
         self._send(code, json.dumps(obj).encode(), "application/json")
 
     def _authorised(self) -> bool:
-        """A request is ours only if it carries the prefix token (header or ?t=)."""
+        """Is this request from the desktop user himself?
+
+        The token was the first answer, and it leaked: a secret passed in `curl` arguments or in
+        a browser URL is visible to every local account through `ps` on a box without hidepid.
+        So the check is now the kernel's own answer — who owns the socket — with the token kept
+        only as a fallback for setups where /proc is unreadable to the service.
+        """
+        if self._peer_is_me():
+            return True
         given = self.headers.get("X-Face-Token", "")
         if not given and "?" in self.path:
             for part in self.path.split("?", 1)[1].split("&"):
@@ -1004,6 +1012,40 @@ class Handler(BaseHTTPRequestHandler):
                     given = part[2:]
                     break
         return bool(given) and hmac.compare_digest(given, TOKEN)
+
+    def _peer_is_me(self) -> bool:
+        """Match the connecting socket's ephemeral port to its owner in /proc/net/tcp{,6}.
+
+        Loopback means "this machine", not "this user": any local account can connect. The
+        socket's uid is the answer, and it never leaves the kernel, so there is nothing for
+        another account to read out of a command line.
+        """
+        try:
+            port = int(self.client_address[1])
+        except (TypeError, ValueError, IndexError):
+            return False
+        me = os.getuid()
+        wanted = f"{port:04X}"
+        for path in ("/proc/net/tcp", "/proc/net/tcp6"):
+            try:
+                lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()[1:]
+            except OSError:
+                continue
+            for line in lines:
+                f = line.split()
+                if len(f) < 8:
+                    continue
+                local = f[1]
+                if not local.endswith(":" + wanted):
+                    continue
+                if f[3] != "01":                       # 01 = ESTABLISHED
+                    continue
+                try:
+                    if int(f[7]) == me:
+                        return True
+                except ValueError:
+                    continue
+        return False
 
     def _deny(self) -> None:
         self._json({"error": "unauthorised",

@@ -34,10 +34,6 @@ if hyprctl clients -j 2>/dev/null | grep -q "\"class\": \"$CLASS\""; then
   say "focus: focused existing window on $(hyprctl activeworkspace -j 2>/dev/null | grep -o '"id": [0-9]*' | head -1)"
 else
   URL="http://127.0.0.1:${HERMES_FACE_PORT:-9120}/face/"
-  TOKEN_FILE="${HERMES_FACE_PREFIX:-$HOME/.local/share/hermes-face}/token"
-  if [ -r "$TOKEN_FILE" ]; then
-    URL="$URL?t=$(head -1 "$TOKEN_FILE")"
-  fi
   LAUNCH="$HOME/.local/bin/hermes-face-kiosk"
   if [ -x "$LAUNCH" ]; then
     setsid "$LAUNCH" --app >/dev/null 2>&1 &
