@@ -17,6 +17,10 @@ if [ -z "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
 fi
 say "focus: sig=${HYPRLAND_INSTANCE_SIGNATURE:-none}"
 
+# One click does the whole job: start the bridge from the vendored copy if it is not running,
+# then show it. `face-ensure.sh` is a no-op when the bridge already answers.
+"$(dirname "$0")/face-ensure.sh" >/dev/null 2>&1 || true
+
 CLASS="chrome-127.0.0.1__face_-Default"
 # This Hyprland evaluates dispatch arguments as Lua. Only the `hl.dsp.*` object form works;
 # the classic space form errors out and the comma form silently does nothing.
@@ -29,6 +33,22 @@ if hyprctl clients -j 2>/dev/null | grep -q "\"class\": \"$CLASS\""; then
   focus_ws
   say "focus: focused existing window on $(hyprctl activeworkspace -j 2>/dev/null | grep -o '"id": [0-9]*' | head -1)"
 else
-  setsid "$HOME/.local/bin/hermes-face-kiosk" --app >/dev/null 2>&1 &
-  say "focus: no window, launched kiosk"
+  URL="http://127.0.0.1:${HERMES_FACE_PORT:-9120}/face/"
+  LAUNCH="$HOME/.local/bin/hermes-face-kiosk"
+  if [ -x "$LAUNCH" ]; then
+    setsid "$LAUNCH" --app >/dev/null 2>&1 &
+    say "focus: no window, launched the installed kiosk launcher"
+  else
+    for cand in chromium chromium-browser google-chrome-stable google-chrome brave-browser \
+                microsoft-edge vivaldi firefox librewolf; do
+      if command -v "$cand" >/dev/null 2>&1; then
+        case "$cand" in
+          firefox|librewolf) setsid "$cand" --new-window "$URL" >/dev/null 2>&1 & ;;
+          *) setsid "$cand" "--app=$URL" >/dev/null 2>&1 & ;;
+        esac
+        say "focus: no window, opened $cand"
+        break
+      fi
+    done
+  fi
 fi

@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "pierregoosen.hermes-face",
   "name": "Hermes Face",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "Pierre-Johan Goosen",
   "license": "MIT",
-  "description": "Shows what the Hermes face is doing (idle, thinking, speaking, failed) in the bar; click brings the face window forward, right click interrupts the turn.",
+  "description": "A holographic agent head for the bar: it shows idle, thinking, speaking or failed, opens the face on click, stops the turn on right click and restarts the bridge on middle click. The face itself ships inside this repository, so one install gives you a working system.",
   "kinds": [
     "bar-widget"
   ],
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "Hermes face",
-    "description": "Live state of the holographic face: idle, thinking, speaking or failed.",
+    "description": "Live state of the holographic face, with open, stop and restart on the same slot.",
     "category": "AI",
     "aliases": ["face", "hermes"],
     "allowMultiple": false,
