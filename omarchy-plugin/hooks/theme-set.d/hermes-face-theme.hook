@@ -21,7 +21,7 @@ say() { printf '%s %s\n' "$(date '+%F %T')" "$*" >>"$LOG"; }
 THEME_NAME="${1:-}"
 [ -n "$THEME_NAME" ] || THEME_NAME=$(cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null)
 
-if [ -e "$OFF_FLAG" ]; then
+if [ -e "$OFF_FLAG" ] && ! grep -q "manual colour edit" "$OFF_FLAG" 2>/dev/null; then
   say "theme: sync off, ignored ${THEME_NAME:-unknown}"
   exit 0
 fi

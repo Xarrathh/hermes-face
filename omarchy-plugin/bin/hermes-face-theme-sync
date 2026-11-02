@@ -1,11 +1,28 @@
 #!/usr/bin/env bash
-# Turn the theme hook on or off for the Hermes face. Off leaves your own colours alone
-# forever; on means each theme switch nudges the face's hues to match it.
+# Turn the theme hook on or off for the Hermes face.
+#
+#   on   - each theme change nudges the face's hues to match the theme (and it applies now)
+#   off  - your colours are never touched again
+# Colours you set by hand always stick; a theme change is the only thing that moves them.
 set -u
 FLAG="$HOME/.local/share/hermes-face/theme-sync-off"
+HOOK="$HOME/.config/omarchy/hooks/theme-set.d/hermes-face-theme.hook"
 case "${1:-}" in
-  on)  rm -f "$FLAG"; echo "hermes-face: theme sync on" ;;
-  off) : > "$FLAG";  echo "hermes-face: theme sync off (your colours win)" ;;
-  *)   if [ -e "$FLAG" ]; then echo "hermes-face: theme sync off"; else echo "hermes-face: theme sync on"; fi
-       echo "usage: hermes-face-theme-sync [on|off]" ;;
+  on)
+    rm -f "$FLAG"
+    echo "hermes-face: theme sync on"
+    [ -x "$HOOK" ] && bash "$HOOK" >/dev/null 2>&1 && echo "hermes-face: colours applied for the current theme"
+    ;;
+  off)
+    printf 'sync off\n' > "$FLAG"
+    echo "hermes-face: theme sync off (your colours win)"
+    ;;
+  *)
+    if [ -e "$FLAG" ] && grep -q "sync off" "$FLAG" 2>/dev/null; then
+      echo "hermes-face: theme sync off"
+    else
+      echo "hermes-face: theme sync on"
+    fi
+    echo "usage: hermes-face-theme-sync [on|off]"
+    ;;
 esac
