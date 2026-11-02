@@ -470,6 +470,7 @@
   /* ------------------------------------------------------------ audio */
   let ac = null, analyser = null, audioEl = null, sourceNode = null, rafAmp = 0, freqBuf = null;
   let lastSeq = null;   /* the turn this page is currently showing */
+  let misses = 0;       /* consecutive failed /state polls */
   const q = [];         /* reply chunks waiting to be heard, in order */
   let qSeq = null, qSeen = 0;
 
@@ -728,9 +729,23 @@
         }
       }
       prevVox = st.voxtype;
+      misses = 0;
     } catch {
-      stateLabel.textContent = 'offline';
-      document.body.dataset.state = 'idle';
+      // One failed poll used to write "offline" and leave it there, which reads as the agent
+      // dying when in fact a single fetch hiccuped — a bridge restart, a busy thread, a window
+      // that was backgrounded. Count misses, say what is really happening, and reload once the
+      // bridge answers again so the window never sits on stale JavaScript.
+      misses += 1;
+      if (misses >= 3) {
+        stateLabel.textContent = 'reconnecting…';
+        document.body.dataset.state = 'idle';
+      }
+      if (misses >= 10) {
+        misses = 0;
+        fetch('/health', { cache: 'no-store' })
+          .then((r) => { if (r.ok) location.reload(); })
+          .catch(() => { /* still down: the next poll tries again */ });
+      }
     }
     setTimeout(poll, 380);
   }
