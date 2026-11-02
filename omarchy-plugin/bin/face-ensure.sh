@@ -86,8 +86,10 @@ install_extras() {
     {
       printf '\n-- Hermes face: stop the live turn and its voice (added by the plugin)\n'
       printf 'o.bind("SUPER + SHIFT + H", "Stop the Hermes face", "hermes-face-stop")\n'
+      printf 'o.bind("SUPER + SHIFT + F", "Hermes face menu", "%s/bin/face-menu.sh")\n' \
+             "$HOME/.config/omarchy/plugins/pierregoosen.hermes-face"
     } >> "$binds" 2>/dev/null || true
-    say "ensure: added SUPER+SHIFT+H to $binds (backup at $binds.hermes-face.bak)"
+    say "ensure: added SUPER+SHIFT+H and SUPER+SHIFT+F to $binds (backup at $binds.hermes-face.bak)"
   fi
   # The Omarchy menu reads exactly one user file, ~/.config/omarchy/extensions/omarchy-menu.jsonc,
   # so our entries are merged into it (backup kept, never duplicated) rather than dropped in as a

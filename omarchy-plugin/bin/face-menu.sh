@@ -5,5 +5,6 @@
 # to the shell as a single program name — "omarchy menu summon hermes" sent that way silently does
 # nothing, which is exactly how right click came to look broken.
 set -u
-# toggle, not summon: a second right click should close the menu the way every other bar menu does
-exec omarchy menu toggle hermes
+# summon, not toggle: a click that seemed to do nothing usually closed a menu that was already
+# open, and the one thing this must never do is leave him with no menu at all.
+exec omarchy menu summon hermes
