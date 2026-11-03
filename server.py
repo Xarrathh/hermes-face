@@ -912,13 +912,22 @@ def run_turn(text: str, seq: int) -> None:
         if caps["query_file"]:
             cmd += ["--query-file", str(qfile)]
         else:
-            # An older CLI has no --query-file, and passing the prompt inline (`-q "<his words>"`)
-            # puts it in the process arguments where another local account can read it. Working is
-            # worth more than that margin here, so the words go inline on this box only, and the
-            # state carries a note saying so — the face tells him rather than refusing to answer.
+            # A CLI without --query-file can only take the prompt inline, where another local
+            # account can read it out of the process list. That is not a trade to make silently, so
+            # it happens only when he has explicitly asked for it; otherwise the face refuses and
+            # says why. (`--query-file -` is the modern route: stdin, nothing in argv.)
             qfile.unlink(missing_ok=True)
-            cmd += ["-q", PROMPT_PREFIX + heard]
-            inline_prompt = True
+            if os.environ.get("HERMES_FACE_ALLOW_INLINE_PROMPT") == "1":
+                cmd += ["-q", PROMPT_PREFIX + heard]
+                inline_prompt = True
+            else:
+                reply = ("This Hermes cannot take a query from a file, so answering would put your "
+                         "spoken words in the process list where other accounts can read them. "
+                         "Update Hermes, or set HERMES_FACE_ALLOW_INLINE_PROMPT=1 to accept that.")
+                record_turn(heard, reply, sid or FACE_SESSION)
+                set_if_current(seq, agent="idle", reply=reply, mood="concerned",
+                               error="hermes chat lacks --query-file")
+                return
         if inline_prompt:
             print("hermes-face: this Hermes CLI has no --query-file, so the spoken words appear in "
                   "the process list; update Hermes to stop that", flush=True)
