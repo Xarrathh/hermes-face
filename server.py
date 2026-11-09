@@ -21,6 +21,7 @@ import signal
 import subprocess
 import threading
 import time
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -81,6 +82,13 @@ VOXTYPE_STATE = Path(os.environ.get("HERMES_FACE_VOXTYPE_STATE")
                      or f"/run/user/{os.getuid()}/voxtype/state")
 
 PORT = int(os.environ.get("HERMES_FACE_PORT", "9120"))
+PEERING = HERE / "peering.json"
+# A POST body is a sentence or a dictionary of numbers; anything larger is a mistake or an
+# attack, and reading it whole would let one request exhaust the bridge's memory.
+MAX_BODY = 1 << 20
+MAX_SPOKEN = 8000           # characters /say will accept; a spoken turn is a sentence
+MAX_VOICE_TEST = 400        # characters the voice sampler will read
+
 
 # Fallback for a box with no network (or no edge-tts): the voices this face shipped with.
 VOICES_STATIC = [
@@ -167,6 +175,17 @@ PROMPT_PREFIX = (
     "and is never shown, so nothing else belongs in the brackets.\n\n"
 )
 
+# The peer layer teaches the agent what it can reach by dropping a note beside this file.
+# Keeping it in a file means the bridge stays generic and a box without a sidecar simply has
+# no note, rather than carrying instructions for a service that is not running.
+PEER_NOTE = HERE / "peering-note.txt"
+if PEER_NOTE.is_file():
+    try:
+        PROMPT_PREFIX = PROMPT_PREFIX + PEER_NOTE.read_text(encoding="utf-8").strip() + "\n\n"
+    except OSError as _exc:
+        print(f"hermes-face: peering note unreadable: {_exc}", flush=True)
+
+
 MOODS = ("neutral", "warm", "amused", "curious", "excited", "serious", "concerned", "dry")
 MOOD_TAG = re.compile(r"^\s*\[([a-z][a-z \-]{1,19})\]\s*", re.I)
 
@@ -249,7 +268,20 @@ def hermes_caps() -> dict[str, bool]:
         out = ""
     caps["query_file"] = "--query-file" in out
     caps["create_if_missing"] = "--create-if-missing" in out
-    caps["stream_json"] = "stream-json" in out
+    # A substring in `--help` is not proof: 0.21.1 prints "stream-json" somewhere in its help
+    # while rejecting the flag outright, and the face then answers every turn with argparse's
+    # complaint and an empty reply. Ask argparse to judge the flag instead -- an invalid *value*
+    # means the flag exists, an unrecognised *argument* means it does not. The probe exits
+    # non-zero either way and runs no turn.
+    caps["stream_json"] = False
+    try:
+        probe = subprocess.run([str(HERMES), "chat", "--format", "__face_probe__",
+                                "--query-file", os.devnull],
+                               capture_output=True, text=True, timeout=20)
+        said = ((probe.stderr or "") + (probe.stdout or "")).lower()
+        caps["stream_json"] = ("invalid choice" in said or "choose from" in said)
+    except Exception:                              # noqa: BLE001
+        caps["stream_json"] = False
     if os.environ.get("HERMES_FACE_FORCE_OLD_CLI") == "1":
         # Test hook: exercise the pre-0.20 command line on a modern CLI.
         caps = {"query_file": False, "create_if_missing": False, "stream_json": False}
@@ -361,11 +393,21 @@ SCHEMA_DATA = load_schema()
 PARAM_SPEC: dict[str, tuple[float, float, float, int | None]] = {}
 for _g in SCHEMA_DATA.get("groups", []):
     for _p in _g.get("params", []):
-        if _p.get("kind") == "select":
-            n = len(_p.get("options", []))
-            PARAM_SPEC[_p["key"]] = (float(_p.get("default", 0)), 0.0, float(max(0, n - 1)), n)
-        else:
-            PARAM_SPEC[_p["key"]] = (_p.get("default", 0.0), _p["min"], _p["max"], None)
+        try:
+            if _p.get("kind") == "select":
+                n = len(_p.get("options", []))
+                PARAM_SPEC[_p["key"]] = (float(_p.get("default", 0)), 0.0,
+                                         float(max(0, n - 1)), n)
+            else:
+                # min/max are required for a slider: inventing 0..1 would silently clamp a
+                # hand-edited param to a range nobody chose, so an incomplete one is skipped.
+                PARAM_SPEC[_p["key"]] = (float(_p.get("default", 0.0)),
+                                         float(_p["min"]), float(_p["max"]), None)
+        except (KeyError, TypeError, ValueError) as _exc:
+            # One malformed param used to raise KeyError at import, which means no bridge and
+            # no face at all — a hand-edited or half-upgraded schema bricked the boot. Skip it
+            # and say so once: the remaining sliders still work and the journal names the key.
+            print(f"schema: skipping param {_p.get('key')!r}: {_exc}", flush=True)
 
 
 def coerce(key: str, value) -> float | int | None:
@@ -468,9 +510,19 @@ def custom_presets(cfg: dict) -> dict:
 def save_config(cfg: dict) -> None:
     """Write through a temp file: a truncate-in-place write can be observed
     half-finished by a concurrent GET /params, which then falls back to schema
-    defaults and silently replaces the tuned look."""
+    defaults and silently replaces the tuned look.
+
+    The temp file is created 0600 explicitly: `write_text` would take the process umask
+    (0644) and the rename carries that mode onto config.json, so every slider move quietly
+    re-opened a file the install promises is owner-only.
+    """
     tmp = CONFIG.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    # O_CREAT's mode applies only when the file is created; a temp file left behind by an older
+    # build keeps its 0644 through every later save. fchmod makes the mode true, not assumed.
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps(cfg, indent=2) + "\n")
     os.replace(tmp, CONFIG)
 
 
@@ -648,6 +700,38 @@ def _speak_chunk(text: str, seq: int, index: int) -> int:
     return index + 1
 
 
+def prune_audio(keep_seq: int | None) -> None:
+    """Remove the speech of every turn older than `keep_seq`.
+
+    The streaming path writes `reply-<seq>-<n>.mp3` and nothing ever deleted them, so the
+    spoken replies piled up in the prefix for as long as the face was in use — his voice on
+    disk forever, and a directory that only grows. A file belonging to the live turn is kept;
+    the page's queue for a finished turn is dead by the time a new one starts.
+
+    `keep_seq=None` means nothing is live — the boot sweep — and every reply goes. Comparing
+    against 0 would not do it: the numbers are per-run, so a prefix that last spoke in turn 40
+    keeps `reply-40-*.mp3` forever if the comparison assumes the next turn is 1.
+    """
+    for f in AUDIO.glob("*.mp3"):
+        m = re.match(r"reply-(\d+)", f.name)
+        try:
+            if m and (keep_seq is None or int(m.group(1)) < keep_seq):
+                f.unlink(missing_ok=True)
+            elif not m and time.time() - f.stat().st_mtime > 86400:
+                f.unlink(missing_ok=True)      # voice-test and boot leftovers
+        except OSError:
+            pass
+    # `q-<ms>.txt` is the prompt handed to the agent, which means his own words on disk, and
+    # nothing ever removed them: the sweep only looked at *.mp3. A turn's prompt is dead the
+    # moment the turn ends, so age them out on the same pass.
+    for f in AUDIO.glob("q-*.txt"):
+        try:
+            if time.time() - f.stat().st_mtime > 86400:
+                f.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def _stream_turn(proc, seq: int, timeout: float = 240.0) -> tuple[str, str, str, int]:
     """Read a `--format stream-json` turn as it arrives, speaking sentence groups early.
 
@@ -806,6 +890,7 @@ def load_history() -> dict:
 def save_history(h: dict) -> None:
     tmp = HISTORY.with_suffix(".json.tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)          # a temp file from an older build keeps its old mode otherwise
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
         fh.write(json.dumps(h, indent=1))
     os.replace(tmp, HISTORY)
@@ -871,7 +956,53 @@ def handle_command(text: str) -> str:
     return f"Unknown command {cmd}. Try slash help."
 
 
-def run_turn(text: str, seq: int) -> None:
+def _speak_fixed(seq: int, text: str) -> None:
+    """Speak a line that needs no agent turn: synthesis, then the usual idle timer."""
+    try:
+        speech = clean_for_speech(text).strip()
+        out = AUDIO / f"reply-{seq}-0.mp3"
+        synth(speech, out)
+        if out.stat().st_size == 0:
+            raise RuntimeError("edge-tts wrote an empty file")
+    except Exception as exc:                           # noqa: BLE001
+        set_if_current(seq, agent="idle", error=f"speech failed: {exc}")
+        return
+    with LOCK:
+        if STATE["seq"] != seq:
+            return
+        STATE["audio_parts"].append(f"/audio/{out.name}")
+        STATE["audio"] = f"/audio/{out.name}"
+        STATE["agent"] = "speaking"
+    _auto_idle_after(out.stat().st_size / 6000.0 + 4.0, seq)
+
+
+PEER_URL = os.environ.get("HERMES_FACE_PEER") or "http://127.0.0.1:9910"
+
+
+def peer_route(text: str) -> str:
+    """Ask the peer layer whether this sentence is addressed to another face.
+
+    Returns the acknowledgement to speak, or "" when the sentence is for this face. A missing
+    sidecar is a normal state, not an error: the face then simply answers as itself.
+    """
+    if not text.strip():
+        return ""
+    try:
+        req = urllib.request.Request(
+            PEER_URL.rstrip("/") + "/route",
+            data=json.dumps({"text": text}).encode(),
+            headers={"Content-Type": "application/json", "User-Agent": "hermes-face/peer-route"},
+        )
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            out = json.loads(resp.read() or b"{}")
+    except Exception:                                  # noqa: BLE001
+        return ""
+    if not out.get("handled"):
+        return ""
+    return str(out.get("ack") or "")
+
+
+def run_turn(text: str, seq: int, origin: str = "local") -> None:
     heard = text.strip()
     if not heard:
         set_if_current(seq, agent="idle")
@@ -887,6 +1018,17 @@ def run_turn(text: str, seq: int) -> None:
         with LOCK:
             new_sid = STATE["session"]
     else:
+        # A sentence that names another face is not for this agent: the sidecar takes it, this
+        # face says one line, and the named face answers where it stands.
+        # Only a sentence the human spoke may be routed: a prompt built for a peer turn
+        # begins with that peer's name, and routing it again ping-pongs forever.
+        ack = "" if origin == "peer" else peer_route(heard)
+        if ack:
+            with LOCK:
+                STATE.update(reply=ack, mood=guess_mood(ack), heard=heard, audio=None, audio_parts=[])
+            _speak_fixed(seq, ack)
+            record_turn(heard, ack, sid or FACE_SESSION)
+            return
         qfile = AUDIO / f"q-{int(time.time() * 1000)}.txt"
         fd = os.open(qfile, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -954,6 +1096,9 @@ def run_turn(text: str, seq: int) -> None:
                                         text=True, stdin=subprocess.DEVNULL,
                                         start_new_session=True)
             except Exception as exc:               # noqa: BLE001
+                # The prompt file holds his spoken words: do not leave it behind when the
+                # agent cannot even be spawned.
+                qfile.unlink(missing_ok=True)
                 reply = f"I hit an error: {exc}"
                 break
             with RUN_LOCK:
@@ -1076,17 +1221,60 @@ def run_turn(text: str, seq: int) -> None:
 # --------------------------------------------------------------------- http
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    # The default banner is "BaseHTTP/0.6 Python/3.14.7": the interpreter patch level is a free
+    # hint about which stdlib bugs apply to this box, and the bridge gains nothing by saying it.
+    server_version = "hermes-face"
+    sys_version = ""
+    head_only = False
 
     def log_message(self, fmt, *args):            # keep the journal quiet
         pass
+
+    def version_string(self) -> str:
+        return self.server_version
 
     def _send(self, code: int, body: bytes, ctype: str) -> None:
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        if self.close_connection:
+            # A refusal that did not read the body must end the connection: the unread bytes
+            # stay in the socket, and the next request on it is parsed starting inside the
+            # abandoned body. Reproduced: a 2 MB POST answered 413 put a
+            # "Request-URI Too Long" traceback in the journal on the following request.
+            self.send_header("Connection", "close")
+        # Nothing here wants to be sniffed, framed or to leak a referrer: the page is a local
+        # appliance, and a mis-typed content type must not turn a JSON error into HTML that a
+        # browser renders.
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Frame-Options", "DENY")
+        if ctype.startswith("text/html"):
+            # The page loads two same-origin scripts and nothing else, so the policy can be
+            # strict: no inline script, no remote origin, no plugins. `unsafe-inline` is
+            # needed only for the <style> block and the two inline style attributes.
+            self.send_header("Content-Security-Policy",
+                             "default-src 'self'; script-src 'self'; "
+                             "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+                             "media-src 'self'; connect-src 'self'; object-src 'none'; "
+                             "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
         self.end_headers()
-        self.wfile.write(body)
+        if not self.head_only:
+            self.wfile.write(body)
+
+    def do_HEAD(self) -> None:                     # noqa: N802
+        """Same routing and headers as GET, body suppressed.
+
+        Without this the base class answers 501 to every HEAD, and a monitor that polls with
+        `curl -I` reads the bridge as dead while it is serving. HEAD is also the cheapest probe
+        a stranger can make, so it goes through the same authorisation as GET.
+        """
+        self.head_only = True
+        try:
+            self.do_GET()
+        finally:
+            self.head_only = False
 
     def _json(self, obj, code: int = 200) -> None:
         self._send(code, json.dumps(obj).encode(), "application/json")
@@ -1181,9 +1369,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, html.encode(), "text/html; charset=utf-8")
         if path.startswith("/face/"):
             rel = path[len("/face/"):]
-            if ".." not in rel:
+            if ".." not in rel and "\x00" not in rel:
                 f = (WEB / rel).resolve()
-                if f.is_file() and str(f).startswith(str(WEB.resolve())):
+                # `is_relative_to`, not a string prefix: a sibling directory whose name starts
+                # with "web" would otherwise pass the old startswith() test.
+                if f.is_file() and f.is_relative_to(WEB.resolve()):
                     ctype = {".png": "image/png", ".json": "application/json",
                              ".html": "text/html; charset=utf-8",
                              ".js": "text/javascript; charset=utf-8",
@@ -1208,8 +1398,20 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/history":
             return self._json(load_history())
         if path == "/health":
-            return self._json({"ok": True, "agent": hermes_available(), "agent_cmd": str(HERMES),
-                               "agent_checked": [str(p) for p in _hermes_candidates()][:8]})
+            # Readiness only. This endpoint is open to every local account, so it must not
+            # answer "which binary" or "every path we probed for one": the agent's location is
+            # a map of the box, and the authed /state already carries it.
+            return self._json({"ok": True, "agent": hermes_available()})
+        if path == "/identity":
+            try:
+                cfg = json.loads(PEERING.read_text(encoding="utf-8"))
+                if not isinstance(cfg, dict):
+                    cfg = {}
+            except (OSError, json.JSONDecodeError):
+                cfg = {}
+            return self._json({"name": cfg.get("name") or "",
+                               "aliases": cfg.get("aliases") or []})
+
         if path.startswith("/audio/"):
             name = os.path.basename(path)
             f = AUDIO / name
@@ -1217,21 +1419,58 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, f.read_bytes(), "audio/mpeg")
         return self._json({"error": "not found"}, 404)
 
+    def _refuse(self, obj, code: int) -> None:
+        """Answer without reading the body, and end the connection.
+
+        The unread body is the whole hazard: keeping the connection alive means the next
+        request line is parsed from inside it. Closing is the only honest option, because the
+        bytes are already on the wire and reading them is exactly what the cap exists to avoid.
+        """
+        self.close_connection = True
+        self._json(obj, code)
+
+    def handle_expect_100(self) -> bool:
+        """Refuse an oversized upload before the client sends it.
+
+        `curl -T` and browsers ask permission first with `Expect: 100-continue`. Saying no here
+        costs one response; saying yes and then refusing costs the whole body over the wire.
+        """
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            self._refuse({"error": "bad Content-Length"}, 400)
+            return False
+        if length < 0 or length > MAX_BODY:
+            self._refuse({"error": "body too large"}, 413)
+            return False
+        self.send_response_only(100)
+        self.end_headers()
+        return True
+
     def do_POST(self) -> None:                     # noqa: N802
         path = self.path.split("?")[0]
         if not self._authorised():
-            return self._deny()
+            return self._refuse({"error": "unauthorised",
+                                 "hint": "open the face through its launcher so it can pass the token"}, 401)
         # Socket ownership says the browser is his; it does not say the request came from *his*
         # page. A cross-site form post would otherwise reach /history/clear and /say, so require
         # a JSON body (a form cannot send one) and, when the browser tells us, a same-origin
         # referrer.
         ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
         if ctype != "application/json":
-            return self._json({"error": "content-type must be application/json"}, 403)
+            return self._refuse({"error": "content-type must be application/json"}, 403)
         origin = self.headers.get("Origin") or self.headers.get("Referer") or ""
         if origin and not re.match(rf"^https?://(127\.0\.0\.1|localhost):{PORT}(/|$)", origin):
-            return self._json({"error": "cross-origin POST refused"}, 403)
-        length = int(self.headers.get("Content-Length") or 0)
+            return self._refuse({"error": "cross-origin POST refused"}, 403)
+        length = 0
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return self._refuse({"error": "bad Content-Length"}, 400)
+        if length < 0 or length > MAX_BODY:
+            # An unbounded read is a one-request memory exhaustion, and a body this size is
+            # never a face command: /say takes a sentence, /params a dictionary of numbers.
+            return self._refuse({"error": "body too large"}, 413)
         raw = self.rfile.read(length) if length else b"{}"
         try:
             payload = json.loads(raw or b"{}")
@@ -1242,6 +1481,8 @@ class Handler(BaseHTTPRequestHandler):
             text = str(payload.get("text") or "")
             if not text.strip():
                 return self._json({"error": "empty"}, 400)
+            if len(text) > MAX_SPOKEN:
+                return self._json({"error": f"text too long (limit {MAX_SPOKEN} characters)"}, 413)
             # The new command always wins: drop whatever is running instead of
             # refusing the turn. The killed run notices its seq moved and stays quiet.
             _kill_turn()
@@ -1250,8 +1491,106 @@ class Handler(BaseHTTPRequestHandler):
                 seq = STATE["seq"]
                 STATE.update(agent="thinking", mood="curious", heard=text.strip(),
                              reply="", error="", audio=None, audio_parts=[])
-            threading.Thread(target=run_turn, args=(text, seq), daemon=True).start()
+            prune_audio(seq)
+            origin = str(payload.get("origin") or "local")
+            threading.Thread(target=run_turn, args=(text, seq, origin), daemon=True).start()
             return self._json({"ok": True, "seq": seq})
+
+        if path == "/speak":
+            # Verbatim speech for the peer layer: the text is spoken as written, with no
+            # agent turn behind it, so a face can deliver a line that is not its own answer.
+            # The sequence number is shared with /say, so an arriving peer line cancels a
+            # turn in progress exactly as a new spoken command does.
+            text = str(payload.get("text") or "").strip()
+            if not text:
+                return self._json({"error": "empty"}, 400)
+            if len(text) > MAX_SPOKEN:
+                return self._json({"error": f"text too long (limit {MAX_SPOKEN} characters)"}, 413)
+            _kill_turn()
+            with LOCK:
+                STATE["seq"] += 1
+                seq = STATE["seq"]
+                STATE.update(agent="thinking", mood=guess_mood(text),
+                             heard=str(payload.get("from") or "peer")[:60],
+                             reply=text, error="", audio=None, audio_parts=[])
+            prune_audio(seq)
+            out = AUDIO / f"peer-{seq}.mp3"
+
+            def speak_peer_line() -> None:
+                try:
+                    speech = clean_for_speech(text).strip()
+                    if not speech:
+                        raise RuntimeError("nothing left to say")
+                    synth(speech, out)
+                    if out.stat().st_size == 0:
+                        raise RuntimeError("edge-tts wrote an empty file")
+                except Exception as exc:               # noqa: BLE001
+                    set_if_current(seq, agent="idle", error=f"speech failed: {exc}")
+                    return
+                with LOCK:
+                    if STATE["seq"] != seq:
+                        return
+                    STATE["audio"] = f"/audio/{out.name}"
+                    STATE["audio_parts"].append(STATE["audio"])
+                    STATE["agent"] = "speaking"
+                _auto_idle_after(out.stat().st_size / 6000.0 + 4.0, seq)
+
+            threading.Thread(target=speak_peer_line, daemon=True).start()
+            return self._json({"ok": True, "seq": seq})
+
+        if path == "/play":
+            # Play audio this bridge already holds, without synthesising anything: the peer
+            # layer relays another face's own voice here, and re-synthesising its words in
+            # this voice would be a different person talking.
+            name = str(payload.get("file") or "").strip()
+            if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}\.mp3", name):
+                return self._json({"error": "bad file name"}, 400)
+            src = AUDIO / name
+            try:
+                if not src.is_file() or src.stat().st_size == 0:
+                    return self._json({"error": "no such audio"}, 404)
+                size = src.stat().st_size
+            except OSError as exc:
+                return self._json({"error": f"unreadable: {exc}"}, 500)
+            _kill_turn()
+            with LOCK:
+                STATE["seq"] += 1
+                seq = STATE["seq"]
+                STATE.update(agent="speaking", heard=str(payload.get("from") or "peer")[:60],
+                             reply=str(payload.get("text") or "")[:MAX_SPOKEN] or STATE["reply"],
+                             mood=guess_mood(str(payload.get("text") or "")),
+                             error="", audio=f"/audio/{name}", audio_parts=[f"/audio/{name}"])
+            _auto_idle_after(size / 6000.0 + 4.0, seq)
+            return self._json({"ok": True, "seq": seq, "audio": f"/audio/{name}"})
+
+        if path == "/identity":
+            # This face's spoken name, written where face-peer reads it. The panel is the place a
+            # person looks, so the panel must be able to change it: a file-only setting is the
+            # reason "where do I put the name" had no answer.
+            name = str(payload.get("name") or "").strip()[:40]
+            aliases = payload.get("aliases")
+            if not name:
+                return self._json({"error": "name required"}, 400)
+            cfg = {}
+            try:
+                cfg = json.loads(PEERING.read_text(encoding="utf-8"))
+                if not isinstance(cfg, dict):
+                    cfg = {}
+            except (OSError, json.JSONDecodeError):
+                cfg = {}
+            cfg["name"] = name
+            if isinstance(aliases, list):
+                cfg["aliases"] = [str(a).strip()[:40] for a in aliases if str(a).strip()][:12]
+            elif isinstance(aliases, str):
+                cfg["aliases"] = [a.strip()[:40] for a in aliases.split(",") if a.strip()][:12]
+            cfg.setdefault("aliases", [name.lower()])
+            tmp = HERE / ".peering.tmp"
+            try:
+                tmp.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+                os.replace(tmp, PEERING)
+            except OSError as exc:
+                return self._json({"error": f"cannot write peering.json: {exc}"}, 500)
+            return self._json({"ok": True, "name": cfg["name"], "aliases": cfg["aliases"]})
 
         if path == "/history/clear":
             with HIST_LOCK:
@@ -1283,7 +1622,8 @@ class Handler(BaseHTTPRequestHandler):
                     save_config(cfg)
                 # Colours changed by hand stay changed, but they do not switch the theme hook
                 # off: on the next theme change the hook nudges the hues again, and he can put
-                # his own back afterwards. `hermes-face-theme-sync off` is the real opt-out.
+                # his own back afterwards. `hermes-face-theme-sync off` is the real opt-out —
+                # this used to be documented the other way round, which no code ever did.
                 out = {"ok": True, "params": cfg["params"],
                        "voice": cfg["voice"], "theme_sync": not THEME_SYNC_OFF.exists(),
                        "rev": config_rev()}
@@ -1314,30 +1654,41 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(out)
 
         if path == "/voice-test":
-            sample = str(payload.get("text") or "This is how I sound. Say the word and I will change it.")
+            sample = str(payload.get("text")
+                         or "This is how I sound. Say the word and I will change it.")[:MAX_VOICE_TEST]
             out = AUDIO / f"voice-test-{int(time.time() * 1000)}.mp3"
             try:
                 synth(sample, out)
-                return self._json({"ok": True, "audio": f"/audio/{out.name}?t={int(time.time())}"})
+                # No `?t=` here: it used to carry a bare timestamp, which is not the token, so
+                # the page's own `withToken()` appended a second `t=` and the bridge read the
+                # useless first one. The socket check authorises the browser already.
+                return self._json({"ok": True, "audio": f"/audio/{out.name}"})
             except Exception as exc:               # noqa: BLE001
                 return self._json({"ok": False, "error": str(exc)}, 500)
 
         if path == "/interrupt":
             killed = _kill_turn()
             with LOCK:
-                # clear the caption too: the killed turn cannot report its own end,
-                # and a half-finished reply left on screen reads as the new answer
-                STATE.update(agent="idle", audio=None, reply="", seq=STATE["seq"] + 1)
+                # Clear the caption and the spoken chunks too: the killed turn cannot report
+                # its own end, and `audio_parts` surviving into the new seq made the page
+                # reset its index and replay the reply he just stopped.
+                STATE.update(agent="idle", audio=None, audio_parts=[], reply="", mood="neutral",
+                             seq=STATE["seq"] + 1)
             return self._json({"ok": True, "killed": killed})
 
         if path == "/spoken":
             with LOCK:
                 want = payload.get("seq")
-                if want is not None and int(want) != STATE["seq"]:
-                    return self._json({"ok": True, "ignored": "stale seq"})
+                if want is not None:
+                    try:
+                        stale = int(want) != STATE["seq"]
+                    except (TypeError, ValueError):
+                        return self._json({"ok": True, "ignored": "unreadable seq"})
+                    if stale:
+                        return self._json({"ok": True, "ignored": "stale seq"})
                 if STATE["agent"] == "thinking":
                     return self._json({"ok": True, "ignored": "turn in flight"})
-                STATE.update(agent="idle", audio=None)
+                STATE.update(agent="idle", audio=None, audio_parts=[])
             return self._json({"ok": True})
 
         return self._json({"error": "not found"}, 404)
@@ -1371,6 +1722,13 @@ def harden_permissions() -> None:
 
 def main() -> None:
     harden_permissions()
+    # Sweep once at boot, not only when a new turn starts: a prefix that has not spoken for a
+    # week still holds a week of his replies and prompts until something else triggers a turn.
+    # No turn is live at boot, so nothing is kept: None means every reply goes.
+    try:
+        prune_audio(None)
+    except OSError:
+        pass
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     srv.daemon_threads = True
     print(f"hermes-face on http://127.0.0.1:{PORT}/face/ (voice {load_config()['voice']})", flush=True)
