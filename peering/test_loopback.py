@@ -205,7 +205,8 @@ def run(verbose: bool = False) -> int:
         up_a, up_b = wait_up(9911), wait_up(9912)
         check("both sidecars accept connections in under 2 s",
               0 <= up_a < 2.0 and 0 <= up_b < 2.0, f"alpha {up_a:.1f}s, beta {up_b:.1f}s")
-        time.sleep(2.5)
+        # beacon (<=2 s) + greeting stagger (<=1 s) + one /speak round trip
+        time.sleep(4.0)
 
         _, pa = http("http://127.0.0.1:9911/peers", key=KEY)
         _, pb = http("http://127.0.0.1:9912/peers", key=KEY)
@@ -268,11 +269,11 @@ def run(verbose: bool = False) -> int:
         seen = [p.get("name") for p in pa2.get("peers", []) if p.get("id") == "face-beta"]
         check("the rename reaches the other box", "BETA-RENAMED" in seen, str(seen))
 
-        # ---- audio is not behind the key (reported, not asserted as correct)
+        # ---- audio must be behind the key: an unauthenticated LAN read was the hole
         (root / "beta" / "audio" / "reply-1-0.mp3").write_bytes(b"ID3" + b"y" * 2000)
         if local:
             status, _ = http_bytes(f"http://{local}:9912/audio/reply-1-0.mp3")
-            check("NOTE: /audio answers the LAN without a key", status == 200, str(status))
+            check("/audio refuses the LAN without a key", status == 403, str(status))
     finally:
         for p in (a, b):
             if p.poll() is None:

@@ -286,10 +286,14 @@ def route_target(text: str, peers: list[dict], me: list[str]) -> tuple[dict | No
                 rest = raw[len(n):].lstrip(" ,:;—-").strip()
                 if rest:
                     candidates.append((len(n), p, rest))
+            head = " ".join(low.split()[:4])
+            neg = re.search(r"\b(not|never|no|nooit|nie|don'?t)\b", low)
             for verb in ADDRESS_VERBS:
                 pat = f"{verb} {n}"
                 i = low.find(pat)
-                if i >= 0:
+                # Only near the start of the sentence, and never after a negation: "I will not
+                # tell Suzie anything" is a statement about Suzie, not an instruction to her.
+                if i >= 0 and pat in head and not (neg and neg.start() < i and i - neg.start() < 30):
                     rest = raw[i + len(pat):].lstrip(" ,:;—-").strip()
                     if rest:
                         candidates.append((len(n) + len(verb), p, rest))
@@ -385,25 +389,33 @@ def listen_loop(args: argparse.Namespace, book: Book, stop: threading.Event) -> 
         fresh, peer = book.seen(pid, info)
         if fresh:
             log(f"peer present: {peer.get('name')} at {addr[0]}:{peer.get('port')}")
-            book.mark_greeted(pid)
-            threading.Thread(target=greet, args=(args, pid, peer), daemon=True).start()
+            threading.Thread(target=greet, args=(book, args, pid, peer), daemon=True).start()
     sock.close()
 
 
-def greet(args: argparse.Namespace, pid: str, peer: dict) -> None:
+def greet(book: "Book", args: argparse.Namespace, pid: str, peer: dict) -> None:
     # Stagger so two faces that spot each other in the same second do not talk over each
     # other: a fixed offset per peer id, still quick enough to feel like noticing someone.
-    time.sleep(1.2 + (sum(pid.encode()) % 1000) / 1000.0)
+    time.sleep(0.4 + (sum(pid.encode()) % 600) / 1000.0)
     try:
         # A greeting must never interrupt the user's own turn: /speak cancels whatever is
         # running, so a restart that re-greets could cut an answer in half mid-sentence.
         if face_state(args).get("agent") != "idle":
-            log("peer arrived while a turn was live; greeting skipped")
+            log("peer arrived while a turn was live; greeting deferred, not consumed")
             return
     except Exception:                              # noqa: BLE001
         pass
     name = peer.get("name") or pid
-    speak_local(args, args.greet.format(name=name), "peer")
+    line = args.greet.format(name=name)
+    book.mark_greeted(pid)                 # only consume the greeting once it will be spoken
+    speak_local(args, line, "peer")
+    # Tell the peer it was seen, as a greeting that is never answered: the other face logs the
+    # arrival without starting a conversation, and a harness can prove it happened.
+    try:
+        post_json(peer_url(peer, "/peer/incoming"),
+                  {"from": args.name, "id": args.id, "text": line, "kind": "greet"}, timeout=10)
+    except Exception as exc:                       # noqa: BLE001
+        log(f"could not tell {name} it was seen: {exc}")
 
 
 # ------------------------------------------------------------------ HTTP
@@ -455,6 +467,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:                      # noqa: N802
         path = self.path.split("?")[0]
+        if not self._authorised():
+            return self._json({"error": "peer key required"}, 403)
         if path == "/health":
             return self._json({"ok": True, "who": self.args.id, "version": VERSION})
         if path == "/transcript":
@@ -478,7 +492,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/peers":
             if not self._authorised():
                 return self._json({"error": "peer key required"}, 403)
-            return self._json({"me": {"id": self.args.id, "name": self.args.name},
+            name, aliases = load_identity(self.args)      # a panel rename must show here
+            self.args.name, self.args.aliases = name, aliases
+            return self._json({"me": {"id": self.args.id, "name": name},
                                "peers": self.book.snapshot()})
         if path.startswith("/audio/"):
             name = urllib.parse.unquote(path[len("/audio/"):])
@@ -590,12 +606,18 @@ class Handler(BaseHTTPRequestHandler):
             log(f"incoming from {frm}: {text[:70]!r} kind={kind}")
             if kind == "greet" or not self.args.auto_reply:
                 return self._json({"ok": True, "reply": "", "audio": ""})
+            who = str(body.get("id") or self.client_address[0])[:64]
             with LOCK_TURNS:
-                turns = TURNS.get(frm, 0)
+                # Keyed on the caller's id: a self-declared name is free to change, and a
+                # rename used to reset the cap. The window makes the cap per conversation.
+                now = time.time()
+                turns, last = TURNS.get(who, (0, 0.0))
+                if now - last > TURN_WINDOW:
+                    turns = 0
                 if turns >= self.args.max_turns:
                     log(f"turn cap reached for {frm}; not answering")
                     return self._json({"ok": True, "reply": "", "audio": "", "capped": True})
-                TURNS[frm] = turns + 1
+                TURNS[who] = (turns + 1, now)
             reply, audio = ask_agent(self.args, frm, text)
             log(f"answered {frm}: {reply[:70]!r} audio={audio or 'none'}")
             return self._json({"ok": True, "reply": reply, "audio": audio})
@@ -603,7 +625,8 @@ class Handler(BaseHTTPRequestHandler):
         return self._json({"error": "not found"}, 404)
 
 
-TURNS: dict[str, int] = {}
+TURNS: dict[str, tuple[int, float]] = {}
+TURN_WINDOW = 300.0        # silence that ends a conversation
 LOCK_TURNS = threading.Lock()
 
 
@@ -680,7 +703,17 @@ def main() -> int:
     threading.Thread(target=beacon_loop, args=(args, stop), daemon=True).start()
     threading.Thread(target=listen_loop, args=(args, book, stop), daemon=True).start()
 
-    httpd = ThreadingHTTPServer(("", args.port), Handler)
+    class FastServer(ThreadingHTTPServer):
+        # HTTPServer.server_bind() calls socket.getfqdn(); with a slow resolver the port stays
+        # closed for seconds while the process looks healthy. The name is never used.
+        def server_bind(self):
+            import socketserver
+            socketserver.TCPServer.server_bind(self)
+            host, port = self.server_address[:2]
+            self.server_name = host
+            self.server_port = port
+
+    httpd = FastServer(("", args.port), Handler)
     log(f"{args.name} ({args.id}) serving on tcp/{args.port}, face at {args.face_url}, "
         f"audio {args.audio_dir}")
     try:
