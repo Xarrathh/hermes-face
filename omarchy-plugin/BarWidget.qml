@@ -23,6 +23,10 @@ BarWidget {
   property bool reachable: false
   property bool themeSync: true
   property bool noAgent: false
+  // Who this face can talk to. Filled from the sidecar, so the bar says "Suzie is here"
+  // without opening anything -- discovery is only useful if it is visible.
+  property var peers: []
+  readonly property string peerNames: peers.length ? peers.map(function (p) { return p.name }).join(", ") : ""
 
   readonly property string glyph: !reachable ? "✕"
     : noAgent ? "✕"
@@ -37,6 +41,7 @@ BarWidget {
     : agent === "speaking" ? "Hermes face: speaking" + (mood ? " (" + mood + ")" : "") + " — right click for the menu"
     : agent === "thinking" ? "Hermes face: thinking — right click for the menu"
     : "Hermes face: idle — click to open, right click for the menu")
+    + (peerNames ? " · with " + peerNames : "")
     + (themeSync ? "" : " · theme sync off")
 
   visible: true
@@ -71,6 +76,34 @@ BarWidget {
     repeat: true
     triggeredOnStart: true
     onTriggered: if (!probe.running) probe.running = true
+  }
+
+  Process {
+    id: peerProbe
+    command: [root.faceDir + "/bin/face-peers.sh"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var raw = String(text || "").trim()
+        if (!raw) { root.peers = []; return }
+        var out = []
+        raw.split("\n").forEach(function (line) {
+          var f = line.split("\t")
+          if (f.length < 3 || f[2] !== "present") return
+          out.push({ name: f[0], where: f[1] })
+        })
+        root.peers = out
+      }
+    }
+  }
+
+  Timer {
+    // Peers move slowly; half a minute is cheap next to the state probe and plenty for a
+    // laptop that joins the network while the bar is already running.
+    interval: 30000
+    running: true
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: if (!peerProbe.running) peerProbe.running = true
   }
 
   BarIconButton {

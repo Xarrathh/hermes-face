@@ -314,10 +314,13 @@ def beacon_loop(args: argparse.Namespace, stop: threading.Event) -> None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 1)
-    body = json.dumps({"v": VERSION, "id": args.id, "name": args.name,
-                       "port": args.port, "face": "hermes-face",
-                       "aliases": args.aliases[:8]}).encode()
     while not stop.is_set():
+        # Re-read the name each tick: a rename through the plugin must reach the other faces
+        # without restarting the service, and the beacon is the only thing that carries it.
+        name, aliases = load_identity(args)
+        body = json.dumps({"v": VERSION, "id": args.id, "name": name,
+                           "port": args.port, "face": "hermes-face",
+                           "aliases": aliases[:8]}).encode()
         try:
             sock.sendto(body, (args.beacon_send, args.beacon_send_port))
         except OSError as exc:
@@ -473,7 +476,9 @@ class Handler(BaseHTTPRequestHandler):
             text = str(body.get("text") or "").strip()
             if not text:
                 return self._json({"handled": False})
-            peer, rest = route_target(text, self.book.snapshot(), self.args.aliases)
+            name, aliases = load_identity(self.args)
+            self.args.name, self.args.aliases = name, aliases
+            peer, rest = route_target(text, self.book.snapshot(), aliases)
             if not peer:
                 return self._json({"handled": False})
             log(f"routing to {peer.get('name')}: {rest[:70]!r}")
