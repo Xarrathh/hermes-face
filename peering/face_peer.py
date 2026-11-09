@@ -169,10 +169,27 @@ def speak_local(args: argparse.Namespace, text: str, frm: str) -> str:
         return ""
 
 
+def echoes_input(reply: str, said: str) -> bool:
+    """True when the answer is really the question coming back.
+
+    A model asked to "reply to them" will sometimes restate what it was told, and on the wire that
+    is indistinguishable from an echo: the other face hears its own sentence in a new voice. Word
+    overlap is a cheap, explainable test — a genuine counter-argument shares the topic words but
+    adds a claim, so the two sets rarely coincide.
+    """
+    a = {w for w in re.findall(r"[a-z0-9']{3,}", reply.lower())}
+    b = {w for w in re.findall(r"[a-z0-9']{3,}", said.lower())}
+    if not a or not b:
+        return False
+    return len(a & b) / max(1, len(a | b)) >= 0.8
+
+
 def ask_agent(args: argparse.Namespace, peer_name: str, text: str) -> tuple[str, str]:
     """Run a real agent turn so the answer is this face's own, then read it and its audio back."""
     prompt = (f"{peer_name} (another Hermes face on this LAN) said: {text}\n"
-              "Reply to them in one short spoken sentence, no markdown.")
+              "Answer them in one short spoken sentence, in your own words. Do not repeat or "
+              "paraphrase what they said; state your own position and one reason for it, and "
+              "no markdown.")
     # Whatever the face spoke before this call is not this turn's answer. Handing that name
     # back relays a stale clip, and the listener hears the previous line again in the voice of
     # whoever said it last -- which reads as an echo.
@@ -548,8 +565,31 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": f"peer unreachable: {exc}"}, 502)
             reply = str(answer.get("reply") or "")
             relayed = relay_audio(self.args, peer, str(answer.get("audio") or "")) if self.args.relay else False
+            lines = [{"who": self.args.name, "text": text[:600]},
+                     {"who": peer.get("name") or "peer", "text": reply}]
+            # `rounds` turns one question into an exchange: each face argues in its own voice, on
+            # its own box, and nothing is replayed here. Capped, because every round is two real
+            # agent turns and a person is listening.
+            rounds = max(1, min(int(body.get("rounds") or 1), 4))
+            for _ in range(rounds - 1):
+                if not reply:
+                    break
+                mine, _audio = ask_agent(self.args, peer.get("name") or "peer", reply)
+                if not mine:
+                    break
+                lines.append({"who": self.args.name, "text": mine})
+                try:
+                    answer = post_json(peer_url(peer, "/peer/incoming"),
+                                       {"from": self.args.name, "id": self.args.id,
+                                        "text": mine[:600], "kind": "talk"},
+                                       timeout=self.args.reply_timeout + 20)
+                except Exception as exc:               # noqa: BLE001
+                    log(f"debate round failed at {peer.get('name')}: {exc}")
+                    break
+                reply = str(answer.get("reply") or "")
+                lines.append({"who": peer.get("name") or "peer", "text": reply})
             return self._json({"ok": True, "peer": peer.get("name"), "reply": reply,
-                               "relayed_audio": relayed})
+                               "relayed_audio": relayed, "rounds": rounds, "lines": lines})
 
         if path == "/route":
             # Addressed by name: this face says the question aloud in its own voice, then the
@@ -619,6 +659,13 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"ok": True, "reply": "", "audio": "", "capped": True})
                 TURNS[who] = (turns + 1, now)
             reply, audio = ask_agent(self.args, frm, text)
+            if reply and echoes_input(reply, text):
+                log(f"{frm} got an echo back ({reply[:50]!r}); asking once more")
+                reply, audio = ask_agent(self.args, frm,
+                                          text + "\n(Do not repeat my words. Say what you think.)")
+                if reply and echoes_input(reply, text):
+                    log("still an echo; refusing to return it")
+                    reply, audio = "", ""
             log(f"answered {frm}: {reply[:70]!r} audio={audio or 'none'}")
             return self._json({"ok": True, "reply": reply, "audio": audio})
 
