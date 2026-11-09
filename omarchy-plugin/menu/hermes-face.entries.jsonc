@@ -1,6 +1,14 @@
 
   // ---- Hermes face (added by the pierregoosen.hermes-face plugin) ----
   "hermes": { "icon": "", "label": "Hermes face", "description": "The holographic agent head" },
+  "hermes.name": {
+    "label": "Name this face",
+    "action": "foot -e bash -lc '~/.config/omarchy/plugins/pierregoosen.hermes-face/bin/face-name.sh; sleep 2'"
+  },
+  "hermes.peers": {
+    "label": "Who can I talk to",
+    "action": "foot -e bash -lc '~/.config/omarchy/plugins/pierregoosen.hermes-face/bin/face-peers.sh; echo; read -r -p \"Enter to close\" _'"
+  },
   "hermes.open": { "label": "Open the face", "action": "~/.config/omarchy/plugins/pierregoosen.hermes-face/bin/face-focus.sh" },
   "hermes.stop": { "label": "Stop the turn", "action": "~/.config/omarchy/plugins/pierregoosen.hermes-face/bin/face-interrupt.sh" },
   "hermes.restart": { "label": "Restart the bridge", "action": "~/.config/omarchy/plugins/pierregoosen.hermes-face/bin/face-restart.sh" },
@@ -8,14 +16,6 @@
     "label": "Theme sync",
     "action": "~/.config/omarchy/plugins/pierregoosen.hermes-face/bin/face-theme-toggle.sh",
     "checked": "! test -f ~/.local/share/hermes-face/theme-sync-off"
-  },
-  "hermes.peers": {
-    "label": "Who can I talk to",
-    "action": "foot -e bash -lc '~/.config/omarchy/plugins/pierregoosen.hermes-face/bin/face-peers.sh; echo; read -r -p \"Enter to close\" _'"
-  },
-  "hermes.name": {
-    "label": "Name this face",
-    "action": "foot -e bash -lc '~/.config/omarchy/plugins/pierregoosen.hermes-face/bin/face-name.sh; sleep 2'"
   },
   "hermes.edit": {
     "label": "Edit the look",
