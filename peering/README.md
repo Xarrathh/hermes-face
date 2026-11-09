@@ -51,3 +51,18 @@ audio. A greeting fires when a peer first appears, staggered 1.2–2.2 s per pee
 faces that spot each other in the same second do not talk over each other. `/talk` speaks
 your line locally, then sends it; the peer answers with a real agent turn and returns the
 text, which is *not* spoken on your side — only its originator's face says a line.
+
+## Health on a remote face
+
+`/health` is behind the peer key like every other route, so a monitor that polls a face on
+another machine must send `X-Peer-Key`. Loopback polling (the bar widget, `face-doctor.sh`,
+`face-state.sh`) is unaffected. This is deliberate: one rule for the port beats one exception
+that someone later copies.
+
+## A peer line never cuts Pierre's answer
+
+Verified on a live bridge by timing, not by reading: a turn was started, and once the face was
+genuinely `speaking` a peer line was posted. The post returned **11.3 s** later, exactly when
+the turn went idle — the answer finished first, then the peer line took the face. Under 45 s
+the wait is polite; past 45 s the line wins, because an answer that never ends must not lock
+out the room.
