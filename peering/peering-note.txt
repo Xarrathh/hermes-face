@@ -1,0 +1,7 @@
+Face-to-face link: another Hermes face (Suzie) runs on this LAN and can be reached from this machine.
+
+To say something to her, call her through this bridge:
+
+curl -s -m 240 -X POST -H 'Content-Type: application/json' -d '{"to":"Suzie","text":"<the sentence you want to say>"}' http://127.0.0.1:9910/ask
+
+It returns {"reply": "...", "relayed_audio": true} and plays her answer out loud on this machine, in her own voice. Ask one clear question at a time, then tell Pierre in one short sentence what she said. Do not repeat her words in full — she has already been heard.

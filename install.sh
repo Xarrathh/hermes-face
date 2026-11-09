@@ -150,6 +150,20 @@ for f in index.html face.js ui.js schema.json presets.json; do
 done
 if [ -f "$REPO/INSTALL.md" ]; then install -m 0644 "$REPO/INSTALL.md" "$PREFIX/INSTALL.md"; fi
 
+# The peer layer is optional: a face on its own is complete without it. Installed here so an
+# upgrade never leaves the sidecar behind the bridge, but it only starts when asked for.
+if [ -f "$REPO/peering/face_peer.py" ]; then
+  install -m 0644 "$REPO/peering/face_peer.py" "$PREFIX/face_peer.py"
+  say "  installed face_peer.py (peer layer)"
+fi
+if [ ! -f "$PREFIX/peering.json" ] && [ -f "$REPO/peering/peering.example.json" ]; then
+  install -m 0644 "$REPO/peering/peering.example.json" "$PREFIX/peering.json"
+  say "  seeded peering.json — set the face name in the panel (gear -> Name)"
+fi
+if [ -f "$REPO/peering/peering-note.txt" ]; then
+  install -m 0644 "$REPO/peering/peering-note.txt" "$PREFIX/peering-note.txt"
+fi
+
 # data: never clobbered. config.json holds the tuned look and the saved presets.
 # A clone carries config.example.json only: the live look is per-machine and is
 # deliberately not in git, so seed from the example when there is nothing to keep.
@@ -221,6 +235,36 @@ if [ "$SERVICE" = 1 ]; then
     systemctl --user enable hermes-face-kiosk.service >/dev/null
   fi
   say "  enabled hermes-face.service"
+
+  # Peer unit: written but not enabled. Joining two faces is a decision about this machine's
+  # network, not an installer default, and it needs two firewall rules that only root can add.
+  if [ -f "$PREFIX/face_peer.py" ]; then
+    PEER_UNIT="$UNIT_DIR/face-peer.service"
+    PEER_NAME="$(sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$PREFIX/peering.json" 2>/dev/null | head -1)"
+    [ -n "$PEER_NAME" ] || PEER_NAME="$(hostname -s)"
+    cat > "$PEER_UNIT" <<PEEREOF
+[Unit]
+Description=face-peer - LAN presence and turn-taking for hermes-face
+After=hermes-face.service
+
+[Service]
+Type=simple
+WorkingDirectory=$PREFIX
+ExecStart=$PREFIX/.venv/bin/python $PREFIX/face_peer.py --name "$PEER_NAME" --id "face-$(hostname -s | tr 'A-Z' 'a-z')" --port 9910 --face-url http://127.0.0.1:$PORT --token-file $PREFIX/token --auto-reply
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=$PREFIX
+
+[Install]
+WantedBy=default.target
+PEEREOF
+    systemctl --user daemon-reload >/dev/null 2>&1 || true
+    say "  wrote $PEER_UNIT (not enabled — it needs the firewall opened first)"
+  fi
 
   if [ "$AUTOSTART" = 1 ]; then
     # The user manager only runs at login without linger, so a boot with no login
@@ -332,6 +376,13 @@ Installed.
   logs      journalctl --user -u hermes-face -f
   look      press Alt+E in the page for the editor; every slider saves
   voice     press V in the page, or set tts.edge.voice in $HERMES_HOME/config.yaml
+
+Peer layer (optional — two faces on one LAN):
+  firewall  sudo ufw allow from <your-lan>/24 to any port 9998 proto udp
+            sudo ufw allow from <your-lan>/24 to any port 9910 proto tcp
+  start     systemctl --user enable --now face-peer.service
+  name it   gear -> Name in the face panel, or $PREFIX/../face-name.sh "Name" "alias1,alias2"
+  check     curl -s http://127.0.0.1:9910/peers
 
 Next: the face runs \`hermes chat\` per turn, so it is the same agent with its own
 session — make sure Hermes has a model configured, then press F9 (or type in the
