@@ -524,11 +524,18 @@ class Handler(BaseHTTPRequestHandler):
             if kind == "greet" or not self.args.auto_reply:
                 return self._json({"ok": True, "reply": "", "audio": ""})
             with LOCK_TURNS:
-                turns = TURNS.get(frm, 0)
+                # The cap is per conversation, not per process: counting for the lifetime of
+                # the service means a face goes permanently deaf after six exchanges, which
+                # reads as "communication is broken" hours later. A gap longer than the window
+                # starts a new conversation.
+                now = time.time()
+                turns, last = TURNS.get(frm, (0, 0.0))
+                if now - last > TURN_WINDOW:
+                    turns = 0
                 if turns >= self.args.max_turns:
-                    log(f"turn cap reached for {frm}; not answering")
+                    log(f"turn cap reached for {frm}; not answering (resets after {int(TURN_WINDOW)}s idle)")
                     return self._json({"ok": True, "reply": "", "audio": "", "capped": True})
-                TURNS[frm] = turns + 1
+                TURNS[frm] = (turns + 1, now)
             reply, audio = ask_agent(self.args, frm, text)
             log(f"answered {frm}: {reply[:70]!r} audio={audio or 'none'}")
             return self._json({"ok": True, "reply": reply, "audio": audio})
@@ -536,7 +543,8 @@ class Handler(BaseHTTPRequestHandler):
         return self._json({"error": "not found"}, 404)
 
 
-TURNS: dict[str, int] = {}
+TURNS: dict[str, tuple[int, float]] = {}
+TURN_WINDOW = 300.0        # seconds of silence that ends a conversation
 LOCK_TURNS = threading.Lock()
 
 
