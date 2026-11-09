@@ -34,6 +34,7 @@ CASES = [
 
 def main() -> int:
     spec = importlib.util.spec_from_file_location("face_peer", HERE / "face_peer.py")
+    assert spec and spec.loader, "cannot load peering/face_peer.py"
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     failures = 0
