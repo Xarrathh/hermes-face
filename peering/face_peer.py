@@ -28,14 +28,37 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "1.1"
+VERSION = "1.2"
 PRESENT_TTL = 8.0          # seconds of beacon silence before a peer is "gone"
-GREET_COOLDOWN = 900.0
-GONE_TTL = 600.0          # a peer that has been gone this long is forgotten outright    # one greeting per peer per 15 minutes
+GREET_COOLDOWN = 900.0    # one greeting per peer per 15 minutes
 BEACON_EVERY = 2.0
 AUDIO_NAME = re.compile(r"[A-Za-z0-9._-]{1,64}\.mp3")
 
 LOG_LOCK = threading.Lock()
+
+# The dialogue, as it happens: one JSON object per line, so a person can read the exchange the way
+# they would read a chat, and the face can show it. Text only — the audio is relayed separately.
+TRANSCRIPT = Path(os.path.expanduser("~/.local/share/hermes-face/conversation.jsonl"))
+
+
+def record(who: str, text: str, reply: str = "") -> None:
+    """Append one line of the conversation, trimmed to something readable."""
+    try:
+        TRANSCRIPT.parent.mkdir(parents=True, exist_ok=True)
+        entry = {"t": round(time.time(), 3), "from": who, "text": text[:280],
+                 "reply": (reply or "")[:280]}
+        with LOG_LOCK:
+            with TRANSCRIPT.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            if TRANSCRIPT.stat().st_size > 256_000:      # keep the tail, not a growing archive
+                lines = TRANSCRIPT.read_text(encoding="utf-8").splitlines()[-400:]
+                TRANSCRIPT.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+# Shared secret for this LAN of faces, read from a file at start (never from argv: a key on a
+# command line is visible to every local account through /proc). Empty means "not configured",
+# and every peer endpoint refuses instead of trusting whatever asks.
+PEER_KEY = ""
 
 
 def log(msg: str) -> None:
@@ -65,17 +88,11 @@ class Book:
 
     def sweep(self) -> list[str]:
         gone = []
-        now = time.time()
         with self.lock:
             for pid, p in self.peers.items():
-                if p.get("present") and now - p.get("last", 0) > PRESENT_TTL:
+                if p.get("present") and time.time() - p.get("last", 0) > PRESENT_TTL:
                     p["present"] = False
                     gone.append(pid)
-            # A face that left hours ago should not linger in a menu or a /peers list as a
-            # ghost row: once it has been gone long enough, forget it entirely.
-            for pid in [k for k, v in self.peers.items()
-                        if not v.get("present") and now - v.get("last", 0) > GONE_TTL]:
-                self.peers.pop(pid, None)
         return gone
 
     def resolve(self, who: str) -> tuple[str | None, dict | None]:
@@ -201,14 +218,16 @@ def ask_agent(args: argparse.Namespace, peer_name: str, text: str) -> tuple[str,
 def post_json(url: str, payload: dict, timeout: float = 40.0) -> dict:
     req = urllib.request.Request(
         url, data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json", "User-Agent": f"face-peer/{VERSION}"},
+        headers={"Content-Type": "application/json", "User-Agent": f"face-peer/{VERSION}",
+                 "X-Peer-Key": PEER_KEY},
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read() or b"{}")
 
 
 def http_bytes(url: str, timeout: float = 30.0) -> bytes:
-    req = urllib.request.Request(url, headers={"User-Agent": f"face-peer/{VERSION}"})
+    req = urllib.request.Request(url, headers={"User-Agent": f"face-peer/{VERSION}",
+                                               "X-Peer-Key": PEER_KEY})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read()
 
@@ -404,6 +423,24 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _authorised(self) -> bool:
+        """Is this request carrying the LAN peer key?
+
+        The listener is on the network, not on loopback: without this, anyone on the LAN could make
+        the face speak, or spend its agent turns through /ask. A request from this machine's own
+        user is trusted the same way the bridge trusts it — by the socket, not by a secret.
+        """
+        import hmac as _hmac
+        if not PEER_KEY:
+            return False
+        given = self.headers.get("X-Peer-Key", "")
+        if given and _hmac.compare_digest(given, PEER_KEY):
+            return True
+        try:
+            return self.client_address[0] in ("127.0.0.1", "::1")
+        except (IndexError, TypeError):
+            return False
+
     def _body(self) -> dict:
         try:
             n = int(self.headers.get("Content-Length") or 0)
@@ -420,7 +457,27 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         if path == "/health":
             return self._json({"ok": True, "who": self.args.id, "version": VERSION})
+        if path == "/transcript":
+            # The exchange as text, newest last, so a person can watch the two faces talk.
+            if not self._authorised():
+                return self._json({"error": "peer key required"}, 403)
+            try:
+                want = int(urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "").get("limit", ["40"])[0])
+            except (ValueError, IndexError):
+                want = 40
+            lines: list[dict] = []
+            try:
+                for raw in TRANSCRIPT.read_text(encoding="utf-8").splitlines()[-max(1, min(want, 400)):]:
+                    try:
+                        lines.append(json.loads(raw))
+                    except json.JSONDecodeError:
+                        continue
+            except OSError:
+                pass
+            return self._json({"me": self.args.name, "lines": lines})
         if path == "/peers":
+            if not self._authorised():
+                return self._json({"error": "peer key required"}, 403)
             return self._json({"me": {"id": self.args.id, "name": self.args.name},
                                "peers": self.book.snapshot()})
         if path.startswith("/audio/"):
@@ -441,6 +498,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:                     # noqa: N802
         path = self.path.split("?")[0]
+        if not self._authorised():
+            return self._json({"error": "peer key required"}, 403)
         body = self._body()
 
         if path == "/speak":
@@ -518,6 +577,7 @@ class Handler(BaseHTTPRequestHandler):
             reply = str(answer.get("reply") or "")
             relayed = relay_audio(self.args, peer, str(answer.get("audio") or "")) if self.args.relay else False
             log(f"asked {peer.get('name')}: {text[:60]!r} -> reply={reply[:60]!r} relayed={relayed}")
+            record(self.args.name, text, reply)
             return self._json({"ok": True, "peer": peer.get("name"), "reply": reply,
                                "relayed_audio": relayed})
 
@@ -531,18 +591,11 @@ class Handler(BaseHTTPRequestHandler):
             if kind == "greet" or not self.args.auto_reply:
                 return self._json({"ok": True, "reply": "", "audio": ""})
             with LOCK_TURNS:
-                # The cap is per conversation, not per process: counting for the lifetime of
-                # the service means a face goes permanently deaf after six exchanges, which
-                # reads as "communication is broken" hours later. A gap longer than the window
-                # starts a new conversation.
-                now = time.time()
-                turns, last = TURNS.get(frm, (0, 0.0))
-                if now - last > TURN_WINDOW:
-                    turns = 0
+                turns = TURNS.get(frm, 0)
                 if turns >= self.args.max_turns:
-                    log(f"turn cap reached for {frm}; not answering (resets after {int(TURN_WINDOW)}s idle)")
+                    log(f"turn cap reached for {frm}; not answering")
                     return self._json({"ok": True, "reply": "", "audio": "", "capped": True})
-                TURNS[frm] = (turns + 1, now)
+                TURNS[frm] = turns + 1
             reply, audio = ask_agent(self.args, frm, text)
             log(f"answered {frm}: {reply[:70]!r} audio={audio or 'none'}")
             return self._json({"ok": True, "reply": reply, "audio": audio})
@@ -550,8 +603,7 @@ class Handler(BaseHTTPRequestHandler):
         return self._json({"error": "not found"}, 404)
 
 
-TURNS: dict[str, tuple[int, float]] = {}
-TURN_WINDOW = 300.0        # seconds of silence that ends a conversation
+TURNS: dict[str, int] = {}
 LOCK_TURNS = threading.Lock()
 
 
@@ -561,6 +613,31 @@ def read_token(path: str) -> str:
     except OSError as exc:
         log(f"token unreadable ({exc}); face calls will 401")
         return ""
+
+
+def read_key(path: str) -> str:
+    """The LAN-wide peer key: read it, or create one on first start.
+
+    Every face on the LAN must hold the same value — copy this file to the other machine. Without
+    it, /ask would let anyone on the network make this face speak and spend its agent turns.
+    """
+    try:
+        key = open(path, encoding="utf-8").read().strip()
+        if len(key) >= 16:
+            return key
+    except OSError:
+        pass
+    import secrets as _secrets
+    key = _secrets.token_hex(24)
+    try:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(key + "\n")
+        log(f"generated a peer key at {path}; copy it to the other faces")
+    except OSError as exc:
+        log(f"cannot write the peer key ({exc}); peer calls will refuse")
+    return key
 
 
 def main() -> int:
@@ -574,6 +651,8 @@ def main() -> int:
                     help="beacon destination port (default: --beacon-port)")
     ap.add_argument("--face-url", default="http://127.0.0.1:9120")
     ap.add_argument("--token-file", default=os.path.expanduser("~/.local/share/hermes-face/token"))
+    ap.add_argument("--key-file", default=os.path.expanduser("~/.local/share/hermes-face/peer.key"),
+                    help="shared LAN peer key (created on first start, 0600)")
     ap.add_argument("--audio-dir", default=os.path.expanduser("~/.local/share/hermes-face/audio"))
     ap.add_argument("--greet", default="Hello, {name}. I can see you.")
     ap.add_argument("--relay", action="store_true",
@@ -588,6 +667,8 @@ def main() -> int:
     if args.beacon_send_port is None:
         args.beacon_send_port = args.beacon_port
     args.token = read_token(args.token_file)
+    global PEER_KEY
+    PEER_KEY = read_key(args.key_file)
     args.audio_dir = Path(os.path.expanduser(args.audio_dir))
     args.name, args.aliases = load_identity(args)
 
