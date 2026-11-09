@@ -283,7 +283,21 @@ def load_identity(args: argparse.Namespace) -> tuple[str, list[str]]:
     return name, aliases
 
 
-ADDRESS_VERBS = ("ask", "tell", "say to", "speak to", "vra", "sê vir", "se vir")
+ADDRESS_VERBS = ("ask", "tell", "say to", "speak to", "vra", "sê vir", "se vir",
+                 "argue with", "debate with", "discuss with", "dispute with", "stry met")
+DEBATE_VERBS = ("argue with", "debate", "debate with", "discuss with", "dispute", "stry met")
+
+
+def debate_rounds(text: str, name: str) -> int:
+    """How many rounds a sentence asks for: "argue with Suzie about X" is a debate, not a question.
+
+    Three rounds is the smallest number that lets a position be answered and then answered back,
+    which is what "argue" means to a person. Anything else stays a single exchange.
+    """
+    low = text.lower()
+    if not any(v in low for v in DEBATE_VERBS):
+        return 1
+    return 3 if name.lower() in low else 1
 
 
 def route_target(text: str, peers: list[dict], me: list[str]) -> tuple[dict | None, str]:
@@ -323,7 +337,20 @@ def route_target(text: str, peers: list[dict], me: list[str]) -> tuple[dict | No
     if not candidates:
         return None, ""
     candidates.sort(key=lambda c: -c[0])
-    return candidates[0][1], candidates[0][2]
+    # "argue with Suzie about X" leaves "about X": the preposition belongs to the verb, not to
+    # the sentence the other face will hear.
+    return candidates[0][1], re.sub(r"^(about|oor|regarding|on)\s+", "", candidates[0][2], flags=re.I)
+
+
+def local_talk(args: argparse.Namespace, to_name: str, text: str, rounds: int) -> None:
+    """Drive this face's own /talk so a debate started by name speaks its own rounds here."""
+    try:
+        post_json(f"http://127.0.0.1:{args.port}/talk",
+                  {"to": to_name, "text": text[:600], "rounds": rounds},
+                  timeout=args.reply_timeout * rounds + 60)
+    except Exception as exc:                       # noqa: BLE001
+        log(f"local debate failed: {exc}")
+        speak_local(args, f"{to_name or 'The other face'} did not answer.", "peer")
 
 
 def http_post_json_async(url: str, payload: dict, timeout: float = 120.0) -> None:
@@ -609,6 +636,17 @@ class Handler(BaseHTTPRequestHandler):
             peer, rest = route_target(text, self.book.snapshot(), aliases)
             if not peer:
                 return self._json({"handled": False})
+            rounds = debate_rounds(text, peer.get("name") or "")
+            if rounds > 1:
+                # A debate needs this face to speak its own rounds, so it cannot be a one-way
+                # delegation: run a local multi-round /talk instead of /peer/incoming.
+                log(f"debate with {peer.get('name')} over {rounds} rounds: {rest[:60]!r}")
+                threading.Thread(target=local_talk,
+                                 args=(self.args, peer.get("name") or "", rest, rounds),
+                                 daemon=True).start()
+                return self._json({"handled": True, "peer": peer.get("name"),
+                                   "ack": f"Arguing with {peer.get('name')}.",
+                                   "rounds": rounds, "text": rest[:600]})
             log(f"routing to {peer.get('name')}: {rest[:70]!r}")
             http_post_json_async(peer_url(peer, "/peer/incoming"),
                                  {"from": self.args.name, "id": self.args.id,
