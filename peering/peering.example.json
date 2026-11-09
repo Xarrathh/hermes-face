@@ -1,0 +1,6 @@
+{
+  "name": "Pro-Pierre",
+  "id": "face-pierre",
+  "aliases": ["pro-pierre", "propierre", "pro pierre", "pierre"],
+  "note": "The name is how other faces address this one. Aliases are matched case-insensitively; a leading alias followed by a comma always routes ('Suzie, ...'), and 'ask/tell/vra <name>' routes too."
+}

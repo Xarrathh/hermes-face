@@ -1,7 +1,133 @@
 --- a/server.py
 +++ b/server.py
-@@ -1402,6 +1402,73 @@
-             threading.Thread(target=run_turn, args=(text, seq), daemon=True).start()
+@@ -21,6 +21,7 @@
+ import subprocess
+ import threading
+ import time
++import urllib.request
+ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+ from pathlib import Path
+ 
+@@ -173,6 +174,17 @@
+     "and is never shown, so nothing else belongs in the brackets.\n\n"
+ )
+ 
++# The peer layer teaches the agent what it can reach by dropping a note beside this file.
++# Keeping it in a file means the bridge stays generic and a box without a sidecar simply has
++# no note, rather than carrying instructions for a service that is not running.
++PEER_NOTE = HERE / "peering-note.txt"
++if PEER_NOTE.is_file():
++    try:
++        PROMPT_PREFIX = PROMPT_PREFIX + PEER_NOTE.read_text(encoding="utf-8").strip() + "\n\n"
++    except OSError as _exc:
++        print(f"hermes-face: peering note unreadable: {_exc}", flush=True)
++
++
+ MOODS = ("neutral", "warm", "amused", "curious", "excited", "serious", "concerned", "dry")
+ MOOD_TAG = re.compile(r"^\s*\[([a-z][a-z \-]{1,19})\]\s*", re.I)
+ 
+@@ -255,7 +267,20 @@
+         out = ""
+     caps["query_file"] = "--query-file" in out
+     caps["create_if_missing"] = "--create-if-missing" in out
+-    caps["stream_json"] = "stream-json" in out
++    # A substring in `--help` is not proof: 0.21.1 prints "stream-json" somewhere in its help
++    # while rejecting the flag outright, and the face then answers every turn with argparse's
++    # complaint and an empty reply. Ask argparse to judge the flag instead -- an invalid *value*
++    # means the flag exists, an unrecognised *argument* means it does not. The probe exits
++    # non-zero either way and runs no turn.
++    caps["stream_json"] = False
++    try:
++        probe = subprocess.run([str(HERMES), "chat", "--format", "__face_probe__",
++                                "--query-file", os.devnull],
++                               capture_output=True, text=True, timeout=20)
++        said = ((probe.stderr or "") + (probe.stdout or "")).lower()
++        caps["stream_json"] = ("invalid choice" in said or "choose from" in said)
++    except Exception:                              # noqa: BLE001
++        caps["stream_json"] = False
+     if os.environ.get("HERMES_FACE_FORCE_OLD_CLI") == "1":
+         # Test hook: exercise the pre-0.20 command line on a modern CLI.
+         caps = {"query_file": False, "create_if_missing": False, "stream_json": False}
+@@ -930,7 +955,53 @@
+     return f"Unknown command {cmd}. Try slash help."
+ 
+ 
+-def run_turn(text: str, seq: int) -> None:
++def _speak_fixed(seq: int, text: str) -> None:
++    """Speak a line that needs no agent turn: synthesis, then the usual idle timer."""
++    try:
++        speech = clean_for_speech(text).strip()
++        out = AUDIO / f"reply-{seq}-0.mp3"
++        synth(speech, out)
++        if out.stat().st_size == 0:
++            raise RuntimeError("edge-tts wrote an empty file")
++    except Exception as exc:                           # noqa: BLE001
++        set_if_current(seq, agent="idle", error=f"speech failed: {exc}")
++        return
++    with LOCK:
++        if STATE["seq"] != seq:
++            return
++        STATE["audio_parts"].append(f"/audio/{out.name}")
++        STATE["audio"] = f"/audio/{out.name}"
++        STATE["agent"] = "speaking"
++    _auto_idle_after(out.stat().st_size / 6000.0 + 4.0, seq)
++
++
++PEER_URL = os.environ.get("HERMES_FACE_PEER") or "http://127.0.0.1:9910"
++
++
++def peer_route(text: str) -> str:
++    """Ask the peer layer whether this sentence is addressed to another face.
++
++    Returns the acknowledgement to speak, or "" when the sentence is for this face. A missing
++    sidecar is a normal state, not an error: the face then simply answers as itself.
++    """
++    if not text.strip():
++        return ""
++    try:
++        req = urllib.request.Request(
++            PEER_URL.rstrip("/") + "/route",
++            data=json.dumps({"text": text}).encode(),
++            headers={"Content-Type": "application/json", "User-Agent": "hermes-face/peer-route"},
++        )
++        with urllib.request.urlopen(req, timeout=4) as resp:
++            out = json.loads(resp.read() or b"{}")
++    except Exception:                                  # noqa: BLE001
++        return ""
++    if not out.get("handled"):
++        return ""
++    return str(out.get("ack") or "")
++
++
++def run_turn(text: str, seq: int, origin: str = "local") -> None:
+     heard = text.strip()
+     if not heard:
+         set_if_current(seq, agent="idle")
+@@ -946,6 +1017,17 @@
+         with LOCK:
+             new_sid = STATE["session"]
+     else:
++        # A sentence that names another face is not for this agent: the sidecar takes it, this
++        # face says one line, and the named face answers where it stands.
++        # Only a sentence the human spoke may be routed: a prompt built for a peer turn
++        # begins with that peer's name, and routing it again ping-pongs forever.
++        ack = "" if origin == "peer" else peer_route(heard)
++        if ack:
++            with LOCK:
++                STATE.update(reply=ack, mood=guess_mood(ack), heard=heard, audio=None, audio_parts=[])
++            _speak_fixed(seq, ack)
++            record_turn(heard, ack, sid or FACE_SESSION)
++            return
+         qfile = AUDIO / f"q-{int(time.time() * 1000)}.txt"
+         fd = os.open(qfile, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+         with os.fdopen(fd, "w", encoding="utf-8") as fh:
+@@ -1399,9 +1481,77 @@
+                 STATE.update(agent="thinking", mood="curious", heard=text.strip(),
+                              reply="", error="", audio=None, audio_parts=[])
+             prune_audio(seq)
+-            threading.Thread(target=run_turn, args=(text, seq), daemon=True).start()
++            origin = str(payload.get("origin") or "local")
++            threading.Thread(target=run_turn, args=(text, seq, origin), daemon=True).start()
              return self._json({"ok": True, "seq": seq})
  
 +        if path == "/speak":
@@ -74,7 +200,7 @@
          if path == "/history/clear":
              with HIST_LOCK:
                  save_history({"sessions": []})
-@@ -1548,4 +1615,4 @@
+@@ -1548,4 +1698,4 @@
  
  
  if __name__ == "__main__":

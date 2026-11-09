@@ -54,7 +54,7 @@ class Book:
         with self.lock:
             p = self.peers.get(pid) or {"greeted": 0.0, "present": False}
             was = bool(p.get("present"))
-            for k in ("name", "port", "face", "ip"):
+            for k in ("name", "port", "face", "ip", "aliases"):
                 if info.get(k) is not None:
                     p[k] = info[k]
             p["last"] = time.time()
@@ -160,7 +160,7 @@ def ask_agent(args: argparse.Namespace, peer_name: str, text: str) -> tuple[str,
     except Exception:                              # noqa: BLE001
         pass
     try:
-        face_call(args, "/say", {"text": prompt})
+        face_call(args, "/say", {"text": prompt, "origin": "peer"})
     except Exception as exc:                       # noqa: BLE001
         log(f"agent turn failed to start: {exc}")
         return "", ""
@@ -210,6 +210,78 @@ def peer_url(p: dict, path: str) -> str:
     return f"http://{p['ip']}:{int(p['port'])}{path}"
 
 
+# ------------------------------------------------------------------ addressing
+def load_identity(args: argparse.Namespace) -> tuple[str, list[str]]:
+    """This face's spoken name and the extra words that address it, from peering.json.
+
+    The name lives in a file rather than in the unit's arguments so the Omarchy plugin can
+    edit it, and so a renamed face keeps its id and its peers.
+    """
+    name, aliases = args.name, []
+    path = Path(args.config_file) if args.config_file else Path(args.audio_dir).parent / "peering.json"
+    try:
+        cfg = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return name, aliases
+    if isinstance(cfg.get("name"), str) and cfg["name"].strip():
+        name = cfg["name"].strip()[:40]
+    if isinstance(cfg.get("aliases"), list):
+        aliases = [str(a).strip()[:40] for a in cfg["aliases"] if str(a).strip()]
+    # A name is always an address for itself, even when the alias list forgot it.
+    for form in (name, name.lower(), name.replace("-", " "), name.replace(" ", "-")):
+        if form.lower() not in [a.lower() for a in aliases]:
+            aliases.append(form)
+    return name, aliases
+
+
+ADDRESS_VERBS = ("ask", "tell", "say to", "speak to", "vra", "sê vir", "se vir")
+
+
+def route_target(text: str, peers: list[dict], me: list[str]) -> tuple[dict | None, str]:
+    """Which peer this sentence is addressed to, and the sentence with the address removed.
+
+    Two shapes are honoured, cheapest first: a leading vocative ("Suzie, ..."), which is how a
+    person actually speaks to a face across a room, and a verb form ("ask Suzie ..."). The
+    longest matching name wins, so a face called "Pro-Pierre" is not shadowed by "Pierre".
+    """
+    raw = text.strip()
+    low = raw.lower()
+    mine = {m.lower() for m in me}
+    candidates: list[tuple[int, dict, str]] = []
+    for p in peers:
+        if not p.get("present"):
+            continue
+        names = [str(p.get("name") or "").lower()] + [str(a).lower() for a in p.get("aliases") or []]
+        for n in names:
+            if not n or n in mine:
+                continue
+            # leading vocative: "suzie," / "suzie:" / "suzie "
+            if low.startswith(n) and (len(low) == len(n) or low[len(n)] in ",:;— -"):
+                rest = raw[len(n):].lstrip(" ,:;—-").strip()
+                if rest:
+                    candidates.append((len(n), p, rest))
+            for verb in ADDRESS_VERBS:
+                pat = f"{verb} {n}"
+                i = low.find(pat)
+                if i >= 0:
+                    rest = raw[i + len(pat):].lstrip(" ,:;—-").strip()
+                    if rest:
+                        candidates.append((len(n) + len(verb), p, rest))
+    if not candidates:
+        return None, ""
+    candidates.sort(key=lambda c: -c[0])
+    return candidates[0][1], candidates[0][2]
+
+
+def http_post_json_async(url: str, payload: dict, timeout: float = 120.0) -> None:
+    def run() -> None:
+        try:
+            post_json(url, payload, timeout=timeout)
+        except Exception as exc:                   # noqa: BLE001
+            log(f"dispatch to {url} failed: {exc}")
+    threading.Thread(target=run, daemon=True).start()
+
+
 def relay_audio(args: argparse.Namespace, peer: dict, name: str) -> bool:
     """Fetch the peer's own mp3 and play it here, so its voice, not ours, is heard."""
     if not name or not AUDIO_NAME.fullmatch(name):
@@ -243,7 +315,8 @@ def beacon_loop(args: argparse.Namespace, stop: threading.Event) -> None:
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 1)
     body = json.dumps({"v": VERSION, "id": args.id, "name": args.name,
-                       "port": args.port, "face": "hermes-face"}).encode()
+                       "port": args.port, "face": "hermes-face",
+                       "aliases": args.aliases[:8]}).encode()
     while not stop.is_set():
         try:
             sock.sendto(body, (args.beacon_send, args.beacon_send_port))
@@ -292,6 +365,14 @@ def greet(args: argparse.Namespace, pid: str, peer: dict) -> None:
     # Stagger so two faces that spot each other in the same second do not talk over each
     # other: a fixed offset per peer id, still quick enough to feel like noticing someone.
     time.sleep(1.2 + (sum(pid.encode()) % 1000) / 1000.0)
+    try:
+        # A greeting must never interrupt the user's own turn: /speak cancels whatever is
+        # running, so a restart that re-greets could cut an answer in half mid-sentence.
+        if face_state(args).get("agent") != "idle":
+            log("peer arrived while a turn was live; greeting skipped")
+            return
+    except Exception:                              # noqa: BLE001
+        pass
     name = peer.get("name") or pid
     speak_local(args, args.greet.format(name=name), "peer")
 
@@ -381,7 +462,50 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:               # noqa: BLE001
                 return self._json({"error": f"peer unreachable: {exc}"}, 502)
             reply = str(answer.get("reply") or "")
-            relayed = relay_audio(self.args, peer, str(answer.get("audio") or ""))
+            relayed = relay_audio(self.args, peer, str(answer.get("audio") or "")) if self.args.relay else False
+            return self._json({"ok": True, "peer": peer.get("name"), "reply": reply,
+                               "relayed_audio": relayed})
+
+        if path == "/route":
+            # Addressed by name: this face says the question aloud in its own voice, then the
+            # named face answers on *its* machine. Nothing is relayed back here -- both faces
+            # are in the room, and a relayed clip would be the same sentence twice.
+            text = str(body.get("text") or "").strip()
+            if not text:
+                return self._json({"handled": False})
+            peer, rest = route_target(text, self.book.snapshot(), self.args.aliases)
+            if not peer:
+                return self._json({"handled": False})
+            log(f"routing to {peer.get('name')}: {rest[:70]!r}")
+            http_post_json_async(peer_url(peer, "/peer/incoming"),
+                                 {"from": self.args.name, "id": self.args.id,
+                                  "text": rest[:600], "kind": "route"},
+                                 timeout=self.args.reply_timeout + 20)
+            return self._json({"handled": True, "peer": peer.get("name"),
+                               "ack": f"Asking {peer.get('name')}.",
+                               "text": rest[:600]})
+
+        if path == "/ask":
+            # Same as /talk but silent on this side: the agent that asked is already speaking
+            # its own line, so this face must not say it twice. The peer's answer is relayed.
+            who = str(body.get("to") or "").strip()
+            text = str(body.get("text") or "").strip()
+            if not who or not text:
+                return self._json({"error": "to and text required"}, 400)
+            pid, peer = self.book.resolve(who)
+            if not peer or not peer.get("present"):
+                return self._json({"error": f"peer {who!r} is not present",
+                                   "peers": [p["id"] for p in self.book.snapshot()]}, 409)
+            try:
+                answer = post_json(peer_url(peer, "/peer/incoming"),
+                                   {"from": self.args.name, "id": self.args.id,
+                                    "text": text[:600], "kind": "talk"},
+                                   timeout=self.args.reply_timeout + 20)
+            except Exception as exc:               # noqa: BLE001
+                return self._json({"error": f"peer unreachable: {exc}"}, 502)
+            reply = str(answer.get("reply") or "")
+            relayed = relay_audio(self.args, peer, str(answer.get("audio") or "")) if self.args.relay else False
+            log(f"asked {peer.get('name')}: {text[:60]!r} -> reply={reply[:60]!r} relayed={relayed}")
             return self._json({"ok": True, "peer": peer.get("name"), "reply": reply,
                                "relayed_audio": relayed})
 
@@ -432,6 +556,11 @@ def main() -> int:
     ap.add_argument("--token-file", default=os.path.expanduser("~/.local/share/hermes-face/token"))
     ap.add_argument("--audio-dir", default=os.path.expanduser("~/.local/share/hermes-face/audio"))
     ap.add_argument("--greet", default="Hello, {name}. I can see you.")
+    ap.add_argument("--relay", action="store_true",
+                    help="play the peer's audio here (off by default: the addressed face answers "
+                         "on its own machine, and both faces are in the room)")
+    ap.add_argument("--config-file", default=None,
+                    help="peering.json holding this face's name and aliases (default: beside audio/)")
     ap.add_argument("--auto-reply", action="store_true", help="answer an incoming line with an agent turn")
     ap.add_argument("--max-turns", type=int, default=6, help="answers per peer before the cap")
     ap.add_argument("--reply-timeout", type=float, default=60.0)
@@ -440,6 +569,7 @@ def main() -> int:
         args.beacon_send_port = args.beacon_port
     args.token = read_token(args.token_file)
     args.audio_dir = Path(os.path.expanduser(args.audio_dir))
+    args.name, args.aliases = load_identity(args)
 
     book = Book()
     stop = threading.Event()
