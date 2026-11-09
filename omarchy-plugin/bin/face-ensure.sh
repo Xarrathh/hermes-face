@@ -9,7 +9,9 @@
 #      possibly vulnerable, server keeps running and the fixes never load.
 # A click on an unchanged install does not interrupt a live turn.
 set -u
-
+# The prefix holds his conversations, his speech and the token, and this script creates it
+# before the server has a chance to harden it. Keep the seed and the stamp owner-only.
+umask 077
 PORT="${HERMES_FACE_PORT:-9120}"
 PREFIX="${HERMES_FACE_PREFIX:-$HOME/.local/share/hermes-face}"
 PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -30,7 +32,11 @@ fail() { printf '%s' "$1" >"$MARKER" 2>/dev/null || true; say "ensure: $1"; exit
 ok() { rm -f "$MARKER" 2>/dev/null || true; }
 
 vendor_hash() {
-  ( cd "$PLUGIN_DIR/face" && { sha256sum server.py; ls web/* | sort | xargs sha256sum; } 2>/dev/null ) \
+  # NUL-separated on purpose: `ls web/* | sort | xargs sha256sum` splits on whitespace, so a
+  # filename with a space hashed as two names (one of them nonexistent) and a rename could
+  # leave the stamp unchanged. `find -print0` hashes exactly the files that exist.
+  ( cd "$PLUGIN_DIR/face" && { sha256sum server.py; find web -maxdepth 1 ! -type d -print0 \
+      | sort -z | xargs -0 -r sha256sum; } 2>/dev/null ) \
     | sha256sum | cut -d' ' -f1
 }
 
@@ -43,6 +49,12 @@ sync_code() {
   cp -f "$PLUGIN_DIR/face/server.py" "$PREFIX/server.py" || { say "ensure: cannot copy server.py"; return 1; }
   mkdir -p "$PREFIX/web"
   cp -f "$PLUGIN_DIR"/face/web/* "$PREFIX/web/" || { say "ensure: cannot copy web/"; return 1; }
+  # A file deleted upstream must not keep being served from the prefix: `cp` never removes
+  # anything, so a retired script stayed live after an update.
+  for old in "$PREFIX"/web/*; do
+    [ -e "$old" ] || continue
+    [ -f "$PLUGIN_DIR/face/web/$(basename "$old")" ] || rm -f "$old"
+  done
   if [ ! -f "$PREFIX/config.json" ] && [ -f "$PLUGIN_DIR/face/config.example.json" ]; then
     cp -f "$PLUGIN_DIR/face/config.example.json" "$PREFIX/config.json"
   fi
@@ -132,6 +144,19 @@ PYEOF
 
 install_extras
 
+# Face-to-face is opt-in: once a peer key exists (or HERMES_FACE_PEER=1 is set) the LAN bridge is
+# kept installed and running, otherwise the installer never opens a port. The firewall rule is part
+# of that install: applied once, when the peer is first enabled, and never re-prompted.
+if [ -f "$PREFIX/peer.key" ] || [ "${HERMES_FACE_PEER:-0}" = "1" ]; then
+  if [ ! -f "$PREFIX/.firewall-applied" ]; then
+    bash "$PLUGIN_DIR/bin/face-peer-enable.sh" --firewall >/dev/null 2>&1 \
+      && say "ensure: peer firewall rule applied" \
+      || say "ensure: peer firewall rule not applied (approval dismissed?) — file is at $PREFIX/peer-firewall.nft"
+  else
+    bash "$PLUGIN_DIR/bin/face-peer-enable.sh" >/dev/null 2>&1 || say "ensure: peer enable failed"
+  fi
+fi
+
 agent_binary() {
   # Do not trust the caller's PATH: the bar launches this with a different environment than a
   # login shell, and `command -v` then finds nothing even though hermes is installed.
@@ -159,6 +184,11 @@ if use_systemd; then
      && ! grep -q "^Environment=HERMES_BIN=" "$UNIT" 2>/dev/null; then
     NEED_UNIT=1
   fi
+  # A unit written before the hardening pass has neither directive, and the vendor hash does
+  # not move when only the script changed: without this the unit stays unhardened forever.
+  for directive in "NoNewPrivileges=yes" "UMask=0077"; do
+    grep -qx "$directive" "$UNIT" 2>/dev/null || NEED_UNIT=1
+  done
 fi
 
 if healthy && [ "$CHANGED" = "0" ] && [ "$NEED_UNIT" = "0" ]; then
@@ -191,6 +221,12 @@ EOF
     cat <<EOF
 Restart=always
 RestartSec=2
+# The bridge is a local appliance that speaks to a browser and one agent CLI; it needs no
+# privilege escalation, and its own writes should never be group- or world-readable. The
+# prefix mode is the first line, this is the second: a file created by a stray helper under
+# this unit still lands 0600.
+NoNewPrivileges=yes
+UMask=0077
 
 [Install]
 WantedBy=default.target
@@ -221,7 +257,30 @@ if use_systemd; then
     fi
   fi
   say "ensure: restarting $UNIT_NAME to run the installed code"
-  systemctl --user restart "$UNIT" >/dev/null 2>&1 || true
+  # Restart by NAME, never by path: `systemctl --user restart ~/.config/systemd/user/x.service`
+  # is parsed as a mount unit ("home-pierregoosen-.config-systemd-user-hermes\x2dface.service.mount")
+  # and fails with exit 5 — which a `|| true` then hid completely. Observed on a real install:
+  # the log said "restarting … bridge is answering" while the process from days earlier kept
+  # serving the pre-audit code, because a healthy /health says nothing about which code the
+  # running process imported.
+  pid_before=$(systemctl --user show -p MainPID --value "$UNIT_NAME" 2>/dev/null || true)
+  if ! restart_err=$(systemctl --user restart "$UNIT_NAME" 2>&1); then
+    say "ensure: restart failed: $restart_err"
+    fail "restart failed: $restart_err"
+  fi
+  pid_after=$(systemctl --user show -p MainPID --value "$UNIT_NAME" 2>/dev/null || true)
+  if [ -n "${pid_before:-}" ] && [ "${pid_before:-0}" != "0" ] && [ "$pid_before" = "${pid_after:-}" ]; then
+    # The same process is still holding the unit: stop it outright and start again, then
+    # refuse to report success if the pid has not moved.
+    say "ensure: restart left pid $pid_before in place — stopping and starting"
+    systemctl --user stop "$UNIT_NAME" >/dev/null 2>&1 || true
+    systemctl --user start "$UNIT_NAME" >/dev/null 2>&1 || true
+    pid_after=$(systemctl --user show -p MainPID --value "$UNIT_NAME" 2>/dev/null || true)
+    if [ "$pid_before" = "${pid_after:-}" ]; then
+      fail "the bridge is still the old process (pid $pid_before) after a restart — the new code is on disk but not running"
+    fi
+  fi
+  say "ensure: running pid ${pid_after:-?} ($(systemctl --user show -p ActiveEnterTimestamp --value "$UNIT_NAME" 2>/dev/null || echo 'start time unknown'))"
 else
   # No systemd: an old bridge may still be holding the port, and starting a second one would
   # simply fail to bind while the old code kept answering. Stop the process that owns the port.

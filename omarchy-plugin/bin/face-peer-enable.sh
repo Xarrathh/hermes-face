@@ -69,23 +69,64 @@ fi
 
 LAN="$(ip -4 route show default 2>/dev/null | awk '{print $3; exit}')"
 IFACE="$(ip -4 route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -1)"
-SUBNET="$(ip -4 -o addr show dev "${IFACE:-}" 2>/dev/null | awk '{print $4}' | head -1)"
+ADDR="$(ip -4 -o addr show dev "${IFACE:-}" 2>/dev/null | awk '{print $4}' | head -1)"
+# The rule must name the NETWORK, not the host address: 192.168.10.112/24 only works because nft
+# happens to normalise it, and it reads as if one machine were the whole subnet.
+SUBNET=""
+if [ -n "${ADDR:-}" ]; then
+  ip="${ADDR%%/*}"; bits="${ADDR##*/}"
+  SUBNET="$(python3 - "$ip" "$bits" <<'PY' 2>/dev/null || true
+import ipaddress, sys
+print(ipaddress.ip_network(f"{sys.argv[1]}/{sys.argv[2]}", strict=False))
+PY
+)"
+  [ -n "$SUBNET" ] || SUBNET="$ADDR"
+fi
+NUGGET="$PREFIX/peer-firewall.nft"
 echo "peer id:      $ID"
 echo "peer port:    tcp/$PEER_PORT   (beacon: udp/9910)"
 echo "shared key:   $PREFIX/peer.key"
 echo "lan subnet:   ${SUBNET:-unknown}"
 echo
-echo "Firewall rule for the LAN only (nftables):"
-echo "  nft add rule inet filter input ip saddr ${SUBNET:-<lan-cidr>} tcp dport $PEER_PORT accept"
-echo "  nft add rule inet filter input ip saddr ${SUBNET:-<lan-cidr>} udp dport 9910 accept"
-echo
+if [ -n "${SUBNET:-}" ]; then
+  cat > "$NUGGET" <<EOF
+# face-peer: let the LAN reach the face-to-face bridge, and nothing else.
+# Applies to the running ruleset; re-apply after a reboot or include this file from your own
+# nftables configuration if you want it persistent.
+add rule inet filter input ip saddr $SUBNET tcp dport $PEER_PORT accept
+add rule inet filter input ip saddr $SUBNET udp dport 9910 accept
+EOF
+  echo "Firewall rule written to $NUGGET (LAN only):"
+  sed 's/^/  /' "$NUGGET" | grep -v '^  #'
+  echo
+fi
+
 if [ "${1:-}" = "--firewall" ]; then
   if [ -z "${SUBNET:-}" ]; then
     echo "cannot work out the LAN subnet; add the rule by hand" >&2
     exit 1
   fi
-  pkexec nft add rule inet filter input ip saddr "$SUBNET" tcp dport "$PEER_PORT" accept 2>/dev/null \
-    || echo "could not apply the rule (no nft table, or approval dismissed); add it by hand" >&2
-  pkexec nft add rule inet filter input ip saddr "$SUBNET" udp dport 9910 accept 2>/dev/null || true
-  say "peer: firewall rules attempted for $SUBNET"
+  # Use whichever firewall is actually running: Omarchy machines commonly run ufw, where nft -f
+  # against "inet filter" fails because the rules live in ufw's own tables.
+  applied=0
+  if command -v ufw >/dev/null 2>&1 && systemctl is-active --quiet ufw 2>/dev/null; then
+    pkexec ufw allow from "$SUBNET" to any port "$PEER_PORT" proto tcp comment 'hermes face peer' >/dev/null 2>&1 && applied=1
+    pkexec ufw allow from "$SUBNET" to any port 9910 proto udp comment 'hermes face beacon' >/dev/null 2>&1 || true
+  elif command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active firewalld >/dev/null 2>&1; then
+    pkexec firewall-cmd --permanent --add-rich-rule="rule family=ipv4 source address=$SUBNET port port=$PEER_PORT protocol=tcp accept" >/dev/null 2>&1 && applied=1
+    pkexec firewall-cmd --permanent --add-rich-rule="rule family=ipv4 source address=$SUBNET port port=9910 protocol=udp accept" >/dev/null 2>&1 || true
+    pkexec firewall-cmd --reload >/dev/null 2>&1 || true
+  elif pkexec nft -f "$NUGGET" 2>/dev/null; then
+    applied=1
+  fi
+  if [ "$applied" = "1" ]; then
+    date '+%F %T' > "$PREFIX/.firewall-applied"
+    say "peer: firewall rules applied for $SUBNET"
+    echo "applied."
+  else
+    echo "not applied: no supported firewall is running (ufw, firewalld, or an inet filter table)." >&2
+    echo "the rule file is ready for when one is: $NUGGET" >&2
+    echo "right now the peer port is reachable from the whole LAN, not just $SUBNET" >&2
+    exit 1
+  fi
 fi
