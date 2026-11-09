@@ -1,6 +1,6 @@
---- /home/pierregoosen/.local/share/hermes-face/server.py	2026-11-09 10:53:36.923807023 +0200
-+++ facetree/server.py	2026-11-09 12:27:14.958330677 +0200
-@@ -1402,6 +1402,48 @@
+--- a/server.py
++++ b/server.py
+@@ -1402,6 +1402,73 @@
              threading.Thread(target=run_turn, args=(text, seq), daemon=True).start()
              return self._json({"ok": True, "seq": seq})
  
@@ -46,10 +46,35 @@
 +            threading.Thread(target=speak_peer_line, daemon=True).start()
 +            return self._json({"ok": True, "seq": seq})
 +
++        if path == "/play":
++            # Play audio this bridge already holds, without synthesising anything: the peer
++            # layer relays another face's own voice here, and re-synthesising its words in
++            # this voice would be a different person talking.
++            name = str(payload.get("file") or "").strip()
++            if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}\.mp3", name):
++                return self._json({"error": "bad file name"}, 400)
++            src = AUDIO / name
++            try:
++                if not src.is_file() or src.stat().st_size == 0:
++                    return self._json({"error": "no such audio"}, 404)
++                size = src.stat().st_size
++            except OSError as exc:
++                return self._json({"error": f"unreadable: {exc}"}, 500)
++            _kill_turn()
++            with LOCK:
++                STATE["seq"] += 1
++                seq = STATE["seq"]
++                STATE.update(agent="speaking", heard=str(payload.get("from") or "peer")[:60],
++                             reply=str(payload.get("text") or "")[:MAX_SPOKEN] or STATE["reply"],
++                             mood=guess_mood(str(payload.get("text") or "")),
++                             error="", audio=f"/audio/{name}", audio_parts=[f"/audio/{name}"])
++            _auto_idle_after(size / 6000.0 + 4.0, seq)
++            return self._json({"ok": True, "seq": seq, "audio": f"/audio/{name}"})
++
          if path == "/history/clear":
              with HIST_LOCK:
                  save_history({"sessions": []})
-@@ -1548,4 +1590,4 @@
+@@ -1548,4 +1615,4 @@
  
  
  if __name__ == "__main__":
