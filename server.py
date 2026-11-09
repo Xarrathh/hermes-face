@@ -275,6 +275,11 @@ def hermes_caps() -> dict[str, bool]:
     # non-zero either way and runs no turn.
     caps["stream_json"] = False
     try:
+        # Only ask argparse when the help text mentions the flag at all: a CLI that accepts an
+        # arbitrary --format value would otherwise START A REAL TURN with an empty prompt just
+        # to discover that the flag exists, which is not a side effect a probe may have.
+        if "--format" not in out:
+            raise LookupError("no --format flag in help")
         probe = subprocess.run([str(HERMES), "chat", "--format", "__face_probe__",
                                 "--query-file", os.devnull],
                                capture_output=True, text=True, timeout=20)

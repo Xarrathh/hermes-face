@@ -34,7 +34,7 @@
  MOODS = ("neutral", "warm", "amused", "curious", "excited", "serious", "concerned", "dry")
  MOOD_TAG = re.compile(r"^\s*\[([a-z][a-z \-]{1,19})\]\s*", re.I)
  
-@@ -255,7 +268,20 @@
+@@ -255,7 +268,25 @@
          out = ""
      caps["query_file"] = "--query-file" in out
      caps["create_if_missing"] = "--create-if-missing" in out
@@ -46,6 +46,11 @@
 +    # non-zero either way and runs no turn.
 +    caps["stream_json"] = False
 +    try:
++        # Only ask argparse when the help text mentions the flag at all: a CLI that accepts an
++        # arbitrary --format value would otherwise START A REAL TURN with an empty prompt just
++        # to discover that the flag exists, which is not a side effect a probe may have.
++        if "--format" not in out:
++            raise LookupError("no --format flag in help")
 +        probe = subprocess.run([str(HERMES), "chat", "--format", "__face_probe__",
 +                                "--query-file", os.devnull],
 +                               capture_output=True, text=True, timeout=20)
@@ -56,7 +61,7 @@
      if os.environ.get("HERMES_FACE_FORCE_OLD_CLI") == "1":
          # Test hook: exercise the pre-0.20 command line on a modern CLI.
          caps = {"query_file": False, "create_if_missing": False, "stream_json": False}
-@@ -930,7 +956,69 @@
+@@ -930,7 +961,69 @@
      return f"Unknown command {cmd}. Try slash help."
  
  
@@ -127,7 +132,7 @@
      heard = text.strip()
      if not heard:
          set_if_current(seq, agent="idle")
-@@ -946,6 +1034,17 @@
+@@ -946,6 +1039,17 @@
          with LOCK:
              new_sid = STATE["session"]
      else:
@@ -145,7 +150,7 @@
          qfile = AUDIO / f"q-{int(time.time() * 1000)}.txt"
          fd = os.open(qfile, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
          with os.fdopen(fd, "w", encoding="utf-8") as fh:
-@@ -1319,6 +1418,16 @@
+@@ -1319,6 +1423,16 @@
              # answer "which binary" or "every path we probed for one": the agent's location is
              # a map of the box, and the authed /state already carries it.
              return self._json({"ok": True, "agent": hermes_available()})
@@ -162,7 +167,7 @@
          if path.startswith("/audio/"):
              name = os.path.basename(path)
              f = AUDIO / name
-@@ -1399,9 +1508,108 @@
+@@ -1399,9 +1513,108 @@
                  STATE.update(agent="thinking", mood="curious", heard=text.strip(),
                               reply="", error="", audio=None, audio_parts=[])
              prune_audio(seq)
@@ -272,7 +277,7 @@
          if path == "/history/clear":
              with HIST_LOCK:
                  save_history({"sessions": []})
-@@ -1548,4 +1756,4 @@
+@@ -1548,4 +1761,4 @@
  
  
  if __name__ == "__main__":
