@@ -92,6 +92,118 @@
    ]
   },
   {
+   "id": "hair",
+   "label": "Hair",
+   "params": [
+    {
+     "key": "hairOn",
+     "label": "Hair",
+     "kind": "select",
+     "options": [
+      "Off",
+      "On"
+     ],
+     "default": 1
+    },
+    {
+     "key": "hairEdge",
+     "label": "Hairline shape",
+     "kind": "select",
+     "options": [
+      "Rounded",
+      "Straight",
+      "Widow's peak",
+      "Receding",
+      "Soft",
+      "M-shape",
+      "High arch",
+      "Low fringe",
+      "Parted",
+      "Wavy",
+      "Side peak"
+     ],
+     "default": 0
+    },
+    {
+     "key": "hairStyle",
+     "label": "Hairline",
+     "kind": "select",
+     "options": [
+      "Pixie",
+      "Sleek",
+      "Bob",
+      "Long",
+      "Wild"
+     ],
+     "default": 2
+    },
+    {
+     "key": "hairLine",
+     "label": "Hairline height",
+     "min": 0.0,
+     "max": 0.1,
+     "step": 0.01,
+     "default": 0.0
+    },
+    {
+     "key": "hairHue",
+     "label": "Hair hue",
+     "min": 0,
+     "max": 360,
+     "step": 1,
+     "default": 275
+    },
+    {
+     "key": "hairTint",
+     "label": "Hair colour",
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01,
+     "default": 0.6
+    },
+    {
+     "key": "hairAmount",
+     "label": "Hair amount",
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01,
+     "default": 0.55
+    },
+    {
+     "key": "hairLength",
+     "label": "Hair length",
+     "min": 0.2,
+     "max": 1.8,
+     "step": 0.01,
+     "default": 0.95
+    },
+    {
+     "key": "hairDensity",
+     "label": "Hair strands",
+     "min": 20,
+     "max": 320,
+     "step": 1,
+     "default": 140
+    },
+    {
+     "key": "hairSway",
+     "label": "Hair sway",
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01,
+     "default": 0.35
+    },
+    {
+     "key": "hairShine",
+     "label": "Hair sheen",
+     "min": 0.0,
+     "max": 1.0,
+     "step": 0.01,
+     "default": 0.5
+    }
+   ]
+  },
+  {
    "id": "eyes",
    "label": "Eyes",
    "params": [

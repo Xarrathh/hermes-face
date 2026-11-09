@@ -437,6 +437,49 @@
 
   /* ---------------------------------------------------------------- backdrop */
 
+  // The face below the hairline: the head's own silhouette from the hairline down to the
+  // chin, closed across the forehead with a soft arc that sits highest at the centre. The
+  // hair is then everything outside this shape, so the two meet along a hairline instead of
+  // along the skull -- which is what made the old version read as a wig.
+  function facePath(hairV, edge) {
+    const p = new Path2D();
+    const N = 26;
+    const v0 = clamp(hairV, 0.06, 0.40);
+    const hwTop = halfWidth(clamp(v0, 0, 1));
+    const Y = (v) => vy(clamp(v, 0, 1)) + jawDrop(clamp(v, 0, 1));
+    p.moveTo(ux(hwTop), Y(v0));
+    for (let i = 1; i <= N; i++) {
+      const v = v0 + (1 - v0) * (i / N);
+      p.lineTo(ux(halfWidth(clamp(v, 0, 1))), Y(v));
+    }
+    p.lineTo(ux(0), Y(1));
+    for (let i = N; i >= 0; i--) {
+      const v = v0 + (1 - v0) * (i / N);
+      p.lineTo(ux(-halfWidth(clamp(v, 0, 1))), Y(v));
+    }
+    // back across the forehead: a sampled hairline curve. One parametric line -- temple
+    // height, centre dip, how wide the peak is, an optional part and an optional wave --
+    // covers every shape in the table, and a new one is a row, not a code path.
+    const dip = edge ? edge.dip : -0.04;
+    const temple = edge ? edge.temple : 0.02;
+    const width = edge ? (edge.width ?? 0.9) : 0.9;
+    const wave = edge ? (edge.wave ?? 0) : 0;
+    const peakX = edge ? (edge.peakX ?? 0) : 0;
+    const yAt = (xn) => {
+      const q = (xn - peakX) / width;
+      const g = Math.exp(-(q * q));
+      return v0 + temple + (dip - temple) * g + wave * Math.sin(xn * Math.PI * 1.5);
+    };
+    const M = 12;
+    p.lineTo(ux(-hwTop), Y(yAt(-1)));
+    for (let i = 1; i <= M; i++) {
+      const xn = -1 + (2 * i) / M;
+      p.lineTo(ux(hwTop * xn), Y(yAt(xn)));
+    }
+    p.closePath();
+    return p;
+  }
+
   function drawBackdrop(t) {
     const bg = ctx.createRadialGradient(VW * 0.5, VH * 0.42, 0, VW * 0.5, VH * 0.52, Math.max(VW, VH) * 0.78);
     bg.addColorStop(0, 'rgb(4,16,22)');
@@ -659,13 +702,21 @@
         // around; moving it puts a shadow on the far cheek and a lit ridge on the near one,
         // which is the difference between a lit mask and a head with a form.
         const lightX = clamp(P.matLightX ?? 0, -1, 1) * 0.55;
-        s += 0.24 * light * g2(u, vn, lightX, lightY, 1.02, lightSpread);
+        // the key light belongs to the face, not to the whole skull: above the hairline and
+        // below the jaw there is no cheek or brow to catch it, and lighting those narrow rows
+        // was the other half of the bright column down the middle
+        const faceBand = clamp((vn - 0.05) / 0.08, 0, 1) * clamp((0.90 - vn) / 0.08, 0, 1);
+        s += 0.24 * light * faceBand * g2(u, vn, lightX, lightY, 1.02, lightSpread);
 
         // how hard the anatomical shadows are: sockets, under the nose, the mouth seam
         const ao = clamp(P.matAO ?? 1, 0, 2);
 
-        // the light falls off to the edges and to the jaw: symmetric, one term each
-        s -= 0.26 * Math.pow(clamp(nx, 0, 1.25), 2.2);
+        // the light falls off to the edges and to the jaw: symmetric, one term each.
+        // nxa is the falloff in ABSOLUTE u, not in the row's half-width: normalising by the
+        // row width made every row brightest at u = 0, and since the crown and chin rows are
+        // narrow that painted a bright column straight down the middle of the head.
+        const nxa = Math.abs(u) / 0.98;
+        s -= 0.26 * Math.pow(clamp(nxa, 0, 1.25), 2.2);
         s -= 0.22 * Math.pow(clamp((vn - 0.58) / 0.42, 0, 1), 1.5);
 
         // sockets: the only shadows with a job -- they seat the eyes in the face
@@ -690,6 +741,15 @@
 
         // fade the relief out at the silhouette, or it draws its own hard edge
         s = 0.5 + (s - 0.5) * clamp((1 - nx) / 0.14, 0, 1);
+        // The crown and the point of the chin are too narrow to hold a lit centre: with the
+        // frontal lamp, full relief there leaves a bright stripe running the whole height of
+        // the head. Damp the relief where the skull is that narrow.
+        const narrow = clamp((vn - 0.04) / 0.10, 0, 1) * clamp((1.02 - vn) / 0.12, 0, 1);
+        s = 0.5 + (s - 0.5) * (0.25 + 0.75 * narrow);
+        // the two halves of the field meet at u = 0; the column that used to show there came
+        // from the row-normalised falloff and the column gain, both fixed at their source.
+        // Nothing is damped here any more: a centre damper only traded a bright line for a
+        // dark one.
         // ... and then re-centre it as absolute tone: 0.28 is unlit skin, the deltas
         // carry it up to the highlights and down to the shadow side. The cells measure
         // this value directly, so this number is the face's exposure, not a hint.
@@ -700,6 +760,20 @@
         const val = clamp(0.25 + (clamp(s, 0.05, 0.92) - 0.5) * 1.70, 0, 1) * 255;
         const o = (r * cols + c) * 4;
         out[o] = val; out[o + 1] = val; out[o + 2] = val; out[o + 3] = 255;
+      }
+    }
+    // A horizontal 3-tap pass over the finished field. The lamp and the nose both put their
+    // peak at u = 0, and the edge falloff darkens everything either side of it, so the field
+    // arrives as a narrow bright column down the middle of the head. One blur pass turns that
+    // column into a broad forehead highlight instead of a stripe.
+    const row = new Float32Array(cols);
+    for (let r = 0; r < rows; r++) {
+      const base = r * cols;
+      for (let c = 0; c < cols; c++) row[c] = out[(base + c) * 4];
+      for (let c = 0; c < cols; c++) {
+        const l = row[c > 0 ? c - 1 : c], m = row[c], q = row[c < cols - 1 ? c + 1 : c];
+        out[(base + c) * 4] = out[(base + c) * 4 + 1] = out[(base + c) * 4 + 2] =
+          0.25 * l + 0.50 * m + 0.25 * q;
       }
     }
     c2.putImageData(img, 0, 0);
@@ -801,7 +875,10 @@
     CELLS.dirty = false;
     if (!LAYER.c) buildLayer();
     const cols = clamp(Math.round(P.matPitch ?? 90), 24, 200);
-    const bx = ux(-1.08), by = vy(-0.08), bw = dU(2.16), bh = dV(1.30);
+    // The measured box is a little wider and taller than the head so the hair has somewhere
+    // to live: at 2.16 x 1.30 the crown sat 0.08 above the frame and long strands were cut
+    // off mid-air by the edge of the grid.
+    const bx = ux(-1.17), by = vy(-0.16), bw = dU(2.34), bh = dV(1.36);
     const rows = Math.max(4, Math.round(bh / (bw / cols)));
 
     // 1. measure: downsample the anatomy to one pixel per cell. Drawing with smoothing
@@ -854,7 +931,7 @@
     // of noise. This is what stopped the original face reading as a blurred photo.
     if (!CELLS.colGain || CELLS.colGain.length !== cols) CELLS.colGain = new Float32Array(cols);
     const colGain = CELLS.colGain;
-    for (let c = 0; c < cols; c++) colGain[c] = 0.80 + 0.28 * hash01(c * 12.9898 + 78.233);
+    for (let c = 0; c < cols; c++) colGain[c] = 0.90 + 0.14 * hash01(c * 12.9898 + 78.233);
 
     for (let r = 0; r < rows; r++) {
       // per-row geometry for the falloff: v in v-units and the silhouette half-width
@@ -867,6 +944,10 @@
         const xCell = bx + ((c + 0.5) / cols) * bw;
         const u = (xCell - HEAD.cx) / (HEAD.w * 0.5);
         const nx = Math.abs(u) / hw;
+        // The rim falloff below is measured in absolute u, not against the row's own
+        // half-width: row-normalised, every row is brightest at u = 0, so the narrow rows at
+        // the crown and chin each light their centre and the head grows a bright column.
+        const nxa = Math.abs(u) / 0.98;
         if (a < 0.05) continue;                       // outside the silhouette
         const L = (0.2126 * src[i] + 0.7152 * src[i + 1] + 0.0722 * src[i + 2]) / 255;
         let q = clamp((L - black) / (white - black), 0, 1);
@@ -882,7 +963,7 @@
         const dith = 1 + (hash01(r * 7.31 + c * 3.17) - 0.5) * 0.16 * gain;
         // 1 in the middle of the face, 1-round at the rim; the crown curves away too,
         // just less, or the top of the head turns into a dark cap
-        let fall = (1 - round * smoothstep(0.70, 1.05, nx)) *
+        let fall = (1 - round * smoothstep(0.70, 1.05, nxa)) *
                    (1 - round * 0.32 * (1 - smoothstep(0.01, 0.14, vn)));
         // An ear sits outside the silhouette, where that falloff is fully black -- which
         // is why measuring the ears in made them disappear. Inside an ear ellipse the
@@ -893,10 +974,11 @@
           if (d < 1) fall = Math.max(fall, 1 - round * 0.5 * smoothstep(0.5, 1.0, d));
         }
         const cg = colGain[c] * dith * (0.45 + 0.55 * fall) * shade;
+        const cgF = cg;
         for (let sy = 0; sy < SUBY; sy++) {
           const rowCut = (sy === SUBY - 1 ? 1 - 0.20 * gain : 1);
           for (let sx = 0; sx < SUBX; sx++) {
-            const g = (0.45 + 0.55 * SUB_GAIN[sx]) * cg * rowCut;
+            const g = (0.45 + 0.55 * SUB_GAIN[sx]) * cgF * rowCut;
             const o = ((r * SUBY + sy) * tw + c * SUBX + sx) * 4;
             out[o] = Math.min(255, tone[0] * g);
             out[o + 1] = Math.min(255, tone[1] * g);
@@ -918,6 +1000,155 @@
     ctx.save();
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(CELLS.cv, CELLS.bx, CELLS.by, CELLS.bw, CELLS.bh);
+    ctx.restore();
+  }
+
+  /* ---------------------------------------------------------------- hair */
+  // Thread-fall hair, drawn on the anatomy layer like everything else, so compositeCells
+  // measures it and the same palette quantises it into the skin's own medium. The mass is
+  // deliberately larger than the skull: the roots inside the head fill are hidden by it,
+  // and only the volume above the crown and the fall past the temples is left showing.
+  // Hairlines. Each style is the same thread-fall with different proportions, so a new
+  // cut is a table row, not a new renderer.
+  const HAIR_STYLES = [
+    { fall: 0.16, spread: 0.030, jitter: 0.70, drift: 0.08, line: 0.17, arch: 1.00 },   // pixie
+    { fall: 0.34, spread: 0.040, jitter: 0.45, drift: 0.10, line: 0.20, arch: 0.85 },   // sleek
+    { fall: 0.46, spread: 0.060, jitter: 0.50, drift: 0.16, line: 0.22, arch: 0.65 },   // bob
+    { fall: 0.80, spread: 0.050, jitter: 0.35, drift: 0.12, line: 0.22, arch: 0.10 },   // long
+    { fall: 0.60, spread: 0.090, jitter: 0.95, drift: 0.26, line: 0.24, arch: 0.35 },   // wild
+  ];
+  // Hairline shapes across the forehead. dip and temple are the centre and corner heights,
+  // width is how broad the middle of the line is, peakX moves that middle sideways (a part)
+  // and wave adds the soft unevenness of a natural hairline.
+  const HAIR_EDGES = [
+    { dip: -0.040, temple: 0.020, width: 0.80 },                       // rounded
+    { dip: 0.000, temple: 0.000, width: 1.00 },                        // straight
+    { dip: 0.070, temple: 0.010, width: 0.28 },                        // widow's peak
+    { dip: -0.060, temple: 0.080, width: 1.60 },                       // receding
+    { dip: -0.020, temple: 0.035, width: 0.90 },                       // soft
+    { dip: 0.020, temple: 0.090, width: 0.30 },                        // m-shape
+    { dip: -0.100, temple: -0.020, width: 0.90 },                      // high arch
+    { dip: 0.040, temple: 0.040, width: 1.20 },                        // low fringe
+    { dip: -0.050, temple: 0.040, width: 0.60, peakX: -0.45 },         // parted
+    { dip: -0.020, temple: 0.020, width: 0.80, wave: 0.022 },          // wavy
+    { dip: 0.050, temple: 0.015, width: 0.20, peakX: 0.40 },           // side peak
+  ];
+  const HAIR = { mass: null, head: null };            // kept for the colour pass
+
+  function drawHair(face, hairV) {
+    // the on/off switch: hair off also clears the mass the colour pass fills
+    const on = Math.round(P.hairOn ?? 1) === 1;
+    if (!on) { HAIR.mask = null; HAIR.tint = null; HAIR.mass = null; return; }
+    const amt = clamp(P.hairAmount ?? 0, 0, 1);
+    if (amt < 0.01) return;
+    const strands = Math.round(clamp(P.hairDensity ?? 140, 20, 320) * (0.4 + 0.6 * amt));
+    const lenK = clamp(P.hairLength ?? 0.95, 0.2, 1.8);
+    const swayK = clamp(P.hairSway ?? 0.35, 0, 1);
+    const shine = clamp(P.hairShine ?? 0.5, 0, 1);
+    const en = clamp(S.pEnergy, 0, 1);                // how loud she is right now
+    const cx = HEAD.cx, cy = HEAD.cy;
+    const st = HAIR_STYLES[clamp(Math.round(P.hairStyle ?? 2), 0, HAIR_STYLES.length - 1)];
+    const rx = HEAD.w * (0.50 + st.spread * (0.5 + 0.5 * amt));
+    const ryTop = HEAD.h * (0.50 + 0.018 * amt);
+    const fall = HEAD.h * st.fall * lenK;              // how far past the temples it hangs
+    const DR = HEAD.w * st.drift;
+    const jit = st.jitter;
+    const wob = Math.sin(S.t * 0.8) * 1.8 * swayK + S.yaw * HEAD.w * 0.06;
+
+    // the mass: an arc over the crown that carries on down both sides and ends in a
+    // deliberately uneven hairline -- a symmetrical curve reads as a hood, not as hair
+    const fR = fall * (0.82 + 0.30 * hash01(3.31));
+    const fL = fall * (0.82 + 0.30 * hash01(7.77));
+    // The bottom edge: short cuts clear the jaw (the arch rises to the chin), long hair has
+    // to keep going past it -- arching a long fall up to the chin is what split it into two
+    // curtains with a gap down the middle.
+    const arch = st.arch;
+    const midY = cy + HEAD.h * 0.50 * arch + fall * (1 - arch) * 1.02;
+    const mass = new Path2D();
+    mass.ellipse(cx, cy, rx, ryTop, 0, Math.PI, Math.PI * 2);
+    mass.lineTo(cx + rx * 0.96, cy + fR);
+    mass.quadraticCurveTo(cx + rx * 0.50, Math.max(cy + fR * 1.02, midY), cx, midY);
+    mass.quadraticCurveTo(cx - rx * 0.50, Math.max(cy + fL * 1.02, midY), cx - rx * 0.96, cy + fL);
+    mass.closePath();
+
+    // Never paint over the head. The face is built from semi-transparent sculpt layers, so
+    // anything bright behind it bleeds through as a stripe down the middle of the forehead;
+    // an even-odd mask of (mass minus head) gives clean roots instead.
+    const mask = new Path2D();
+    mask.addPath(mass);
+    mask.addPath(face);
+    HAIR.mask = mask;                                  // the colour pass draws the same area
+    HAIR.mass = mass;
+    // The colour pass stops a hair short of the face: the clip's antialiased edge leaves a
+    // fringe of skin inside the hair mask, and tinting that fringe paints a coloured rim
+    // along the jaw and chin.
+    const grown = new DOMMatrix().translate(cx, cy).scale(1.012, 1.008).translate(-cx, -cy);
+    const tmask = new Path2D();
+    tmask.addPath(mass);
+    tmask.addPath(face, grown);
+    HAIR.tint = tmask;
+
+    ctx.save();
+    ctx.fillStyle = '#22282d';                          // a dim bed under the light threads
+    ctx.fill(mask, 'evenodd');
+    ctx.clip(mask, 'evenodd');
+    ctx.lineCap = 'round';
+
+    const top = cy - HEAD.h * (0.50 + 0.004), bottom = cy + fR * 1.12;
+
+    for (let i = 0; i < strands; i++) {
+      const f = hash01(i * 1.93 + 0.7);                 // where across the mass
+      const x0 = cx + (f - 0.5) * 2.1 * rx;
+      const h1 = hash01(i * 3.71 + 1.3), h2 = hash01(i * 9.17 + 5.1);
+      const edge = Math.abs(x0 - cx) / rx;              // 0 centre, 1 rim
+      const len = (bottom - top) * (0.55 + jit * h1) * (0.55 + 0.45 * edge) * (1 + 0.35 * en);
+      const drift = (f - 0.5) * DR + wob * (0.3 + 0.7 * edge);
+      // light threads: a bright travelling dash down each strand, brighter while she speaks.
+      // source-over, not 'lighter': the anatomy layer is transparent, so additive blending
+      // there just builds alpha and the cells measure it as almost black.
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.setLineDash([6 + 16 * h1, 12 + 22 * h2]);
+      ctx.lineDashOffset = -(S.t * (18 + 70 * h1) + i * 9);
+      ctx.strokeStyle = `rgba(130,240,255,${((0.35 + 0.5 * en + 0.15 * h2) * (0.6 + 0.4 * shine)).toFixed(3)})`;
+      ctx.lineWidth = 1.2 + 1.6 * h1;
+      ctx.beginPath();
+      ctx.moveTo(x0, top);
+      ctx.bezierCurveTo(x0 + drift * 0.25, top + len * 0.35,
+                        x0 + drift * 0.75, top + len * 0.72,
+                        x0 + drift, top + len);
+      ctx.stroke();
+    }
+
+    ctx.setLineDash([]);
+    ctx.globalCompositeOperation = 'source-over';
+
+    // The cap above the crown was reading as a bright spike: fade it into the background so
+    // the silhouette ends softly instead of with a lit edge.
+    const gy0 = cy - ryTop, gy1 = cy - HEAD.h * 0.46;
+    const fade = ctx.createLinearGradient(0, gy0, 0, gy1);
+    fade.addColorStop(0, 'rgba(0,0,0,0.85)');
+    fade.addColorStop(0.55, 'rgba(0,0,0,0.35)');
+    fade.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = fade;
+    ctx.fillRect(cx - rx - 2, gy0 - 6, rx * 2 + 4, gy1 - gy0 + 6);
+
+    ctx.restore();
+  }
+
+  // The cells take their tone from the palette, so hair cannot have a colour of its own from
+  // that pipeline. Multiplying the quantised hair by the chosen hue keeps the cell structure
+  // and moves only the colour, which is what "hair has its own colour" has to mean here.
+  function drawHairTint() {
+    const amt = clamp(P.hairAmount ?? 0, 0, 1);
+    const tint = clamp(P.hairTint ?? 0.6, 0, 1);
+    if (amt < 0.01 || tint < 0.01 || !HAIR.mask) return;
+    const c = hsl2rgb(P.hairHue ?? 275, 0.75, 0.5);
+    ctx.save();
+    // 'color' keeps the cell's own luminance and takes only hue+saturation from the fill --
+    // 'multiply' can only darken, which turned every hue into a muddy version of the theme.
+    ctx.globalCompositeOperation = 'color';
+    ctx.fillStyle = `rgba(${c[0]},${c[1]},${c[2]},${tint.toFixed(3)})`;
+    ctx.fill(HAIR.tint || HAIR.mask, 'evenodd');
     ctx.restore();
   }
 
@@ -1539,6 +1770,14 @@
     drawBackdrop(t);
 
     const hp = headPath();
+    const st = HAIR_STYLES[clamp(Math.round(P.hairStyle ?? 2), 0, HAIR_STYLES.length - 1)];
+    const hairV = clamp(st.line + (P.hairLine ?? 0), 0.08, 0.36);
+    const hairOn = Math.round(P.hairOn ?? 1) === 1;
+    // With hair off the head is whole: the hairline only exists to give the hair an edge, so
+    // keeping it would leave a bald skull with a shaved-looking line across the forehead.
+    const fp = hairOn
+      ? facePath(hairV, HAIR_EDGES[clamp(Math.round(P.hairEdge ?? 0), 0, HAIR_EDGES.length - 1)])
+      : hp;
 
     // pass 1: the anatomy, alone on its own layer -- one flat base, the sculpt field,
     // the ears. No room, no rain, no shell lighting: the cells must measure the face.
@@ -1557,8 +1796,9 @@
     ctx.rotate(S.roll);
     ctx.scale(1 - 0.22 * Math.abs(yaw), 1 - 0.10 * Math.abs(pitch));
     ctx.translate(-HEAD.cx, -HEAD.cy + S.breath);
-    drawCellBase(hp);
-    drawSculpt(hp);
+    drawHair(fp, hairV);
+    drawCellBase(fp);
+    drawSculpt(fp);
     // Ears are part of the anatomy again: they get measured into the cells like the rest
     // of the head. The rim falloff is taught about them (see compositeCells), which is
     // what was eating them when they were measured in before.
@@ -1576,6 +1816,16 @@
 
     ctx.save();
     ctx.translate(0, S.breath);
+
+    // hair colour: the same transform the anatomy pass used, minus the breath this context
+    // already carries, so the tint lands exactly on the quantised hair
+    ctx.save();
+    ctx.translate(HEAD.cx + dxHead, HEAD.cy + dyHead);
+    ctx.rotate(S.roll);
+    ctx.scale(1 - 0.22 * Math.abs(yaw), 1 - 0.10 * Math.abs(pitch));
+    ctx.translate(-HEAD.cx, -HEAD.cy);
+    drawHairTint();
+    ctx.restore();
 
     // thinking ring (under the face, so the features stay on top)
     if (S.think > 0.02) {
@@ -1701,6 +1951,11 @@
     },
     setGaze(x, y) { S.tgx = clamp(Number(x) || 0, -1, 1); S.tgy = clamp(Number(y) || 0, -1, 1);
                    S.gazeX = S.tgx; S.gazeY = S.tgy; S.nextSaccade = 1e9; },
+    // the webcam calls this ~4x/s: move the target only, so the eyes ease like real
+    // saccades instead of snapping on every poll
+    setGazeTarget(x, y) { S.tgx = clamp(Number(x) || 0, -1, 1);
+                          S.tgy = clamp(Number(y) || 0, -1, 1); S.nextSaccade = 1e9; },
+    releaseGaze() { if (S.nextSaccade > 1e8) S.nextSaccade = rnd(0.3, 1.1); },
     // a probe for exactly this class of bug: "the frame runs but nothing paints"
     debug: () => ({
       onMain: ctx === mainCtx, vw: VW, vh: VH, dpr: DPR,
