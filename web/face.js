@@ -1038,7 +1038,7 @@
   function drawHair(face, hairV) {
     // the on/off switch: hair off also clears the mass the colour pass fills
     const on = Math.round(P.hairOn ?? 1) === 1;
-    if (!on) { HAIR.mask = null; HAIR.tint = null; HAIR.mass = null; return; }
+    if (!on) { HAIR.layer = null; HAIR.shape = null; return; }
     const amt = clamp(P.hairAmount ?? 0, 0, 1);
     if (amt < 0.01) return;
     const strands = Math.round(clamp(P.hairDensity ?? 140, 20, 320) * (0.4 + 0.6 * amt));
@@ -1059,40 +1059,62 @@
     // deliberately uneven hairline -- a symmetrical curve reads as a hood, not as hair
     const fR = fall * (0.82 + 0.30 * hash01(3.31));
     const fL = fall * (0.82 + 0.30 * hash01(7.77));
-    // The bottom edge: short cuts clear the jaw (the arch rises to the chin), long hair has
-    // to keep going past it -- arching a long fall up to the chin is what split it into two
-    // curtains with a gap down the middle.
+    // The bottom edge. Short cuts must clear the mouth: the centre of the bottom edge sits
+    // higher as the style shortens, so a pixie ends around the ear instead of curving across
+    // the chin -- the arch used to be inverted, which drew the shortest cuts lowest and made
+    // the hair wrap the jaw and the mouth. Long cuts keep going past the chin, which is what
+    // stops a long fall from splitting into two curtains with a gap down the middle.
     const arch = st.arch;
-    const midY = cy + HEAD.h * 0.50 * arch + fall * (1 - arch) * 1.02;
+    const midY = cy + HEAD.h * (0.16 + 0.54 * (1 - arch));
     const mass = new Path2D();
     mass.ellipse(cx, cy, rx, ryTop, 0, Math.PI, Math.PI * 2);
     mass.lineTo(cx + rx * 0.96, cy + fR);
-    mass.quadraticCurveTo(cx + rx * 0.50, Math.max(cy + fR * 1.02, midY), cx, midY);
-    mass.quadraticCurveTo(cx - rx * 0.50, Math.max(cy + fL * 1.02, midY), cx - rx * 0.96, cy + fL);
+    mass.quadraticCurveTo(cx + rx * 0.58, Math.max(cy + fR * 1.04, midY), cx, midY);
+    mass.quadraticCurveTo(cx - rx * 0.58, Math.max(cy + fL * 1.04, midY), cx - rx * 0.96, cy + fL);
     mass.closePath();
 
-    // Never paint over the head. The face is built from semi-transparent sculpt layers, so
-    // anything bright behind it bleeds through as a stripe down the middle of the forehead;
-    // an even-odd mask of (mass minus head) gives clean roots instead.
-    const mask = new Path2D();
-    mask.addPath(mass);
-    mask.addPath(face);
-    HAIR.mask = mask;                                  // the colour pass draws the same area
-    HAIR.mass = mass;
-    // The colour pass stops a hair short of the face: the clip's antialiased edge leaves a
-    // fringe of skin inside the hair mask, and tinting that fringe paints a coloured rim
-    // along the jaw and chin.
-    const grown = new DOMMatrix().translate(cx, cy).scale(1.012, 1.008).translate(-cx, -cy);
-    const tmask = new Path2D();
-    tmask.addPath(mass);
-    tmask.addPath(face, grown);
-    HAIR.tint = tmask;
+    // Never paint over the head. Even-odd over "mass plus face" only subtracts the face while the
+    // mass encloses it; a short cut does not enclose anything, and even-odd then fills BOTH paths —
+    // which is how a pixie ended up with strands, bed and colour all over the chin. The hair shape
+    // is therefore built as a bitmap: fill the mass, then erase the face from it.
+    const cv = ctx.canvas;
+    for (const key of ['shape', 'strands']) {
+      if (!HAIR[key] || HAIR[key].width !== cv.width || HAIR[key].height !== cv.height) {
+        HAIR[key] = document.createElement('canvas');
+        HAIR[key].width = cv.width;
+        HAIR[key].height = cv.height;
+      }
+    }
+    const grown = new DOMMatrix().translate(cx, cy).scale(1.008, 1.005).translate(-cx, -cy);
+    const faceGrown = new Path2D();
+    faceGrown.addPath(face, grown);
 
-    ctx.save();
-    ctx.fillStyle = '#22282d';                          // a dim bed under the light threads
-    ctx.fill(mask, 'evenodd');
-    ctx.clip(mask, 'evenodd');
-    ctx.lineCap = 'round';
+    const shCtx = HAIR.shape.getContext('2d');
+    shCtx.setTransform(1, 0, 0, 1, 0, 0);
+    shCtx.globalCompositeOperation = 'source-over';
+    shCtx.clearRect(0, 0, cv.width, cv.height);
+    shCtx.setTransform(ctx.getTransform());
+    shCtx.fillStyle = '#fff';
+    shCtx.fill(mass);
+    shCtx.globalCompositeOperation = 'destination-out';
+    shCtx.fill(faceGrown);
+    shCtx.setTransform(1, 0, 0, 1, 0, 0);
+
+    if (!HAIR.layer || HAIR.layer.width !== cv.width || HAIR.layer.height !== cv.height) {
+      HAIR.layer = document.createElement('canvas');
+      HAIR.layer.width = cv.width;
+      HAIR.layer.height = cv.height;
+    }
+    const lc = HAIR.layer.getContext('2d');
+    lc.setTransform(1, 0, 0, 1, 0, 0);
+    lc.clearRect(0, 0, cv.width, cv.height);
+    lc.setTransform(ctx.getTransform());
+    HAIR.layerCtx = lc;
+
+    lc.save();
+    lc.fillStyle = '#22282d';                           // a dim bed under the light threads
+    lc.fillRect(0, 0, cv.width, cv.height);
+    lc.lineCap = 'round';
 
     const top = cy - HEAD.h * (0.50 + 0.004), bottom = cy + fR * 1.12;
 
@@ -1106,32 +1128,44 @@
       // light threads: a bright travelling dash down each strand, brighter while she speaks.
       // source-over, not 'lighter': the anatomy layer is transparent, so additive blending
       // there just builds alpha and the cells measure it as almost black.
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.setLineDash([6 + 16 * h1, 12 + 22 * h2]);
-      ctx.lineDashOffset = -(S.t * (18 + 70 * h1) + i * 9);
-      ctx.strokeStyle = `rgba(130,240,255,${((0.35 + 0.5 * en + 0.15 * h2) * (0.6 + 0.4 * shine)).toFixed(3)})`;
-      ctx.lineWidth = 1.2 + 1.6 * h1;
-      ctx.beginPath();
-      ctx.moveTo(x0, top);
-      ctx.bezierCurveTo(x0 + drift * 0.25, top + len * 0.35,
-                        x0 + drift * 0.75, top + len * 0.72,
-                        x0 + drift, top + len);
-      ctx.stroke();
+      lc.globalCompositeOperation = 'source-over';
+      lc.setLineDash([6 + 16 * h1, 12 + 22 * h2]);
+      lc.lineDashOffset = -(S.t * (18 + 70 * h1) + i * 9);
+      lc.strokeStyle = `rgba(130,240,255,${((0.35 + 0.5 * en + 0.15 * h2) * (0.6 + 0.4 * shine)).toFixed(3)})`;
+      lc.lineWidth = 1.2 + 1.6 * h1;
+      lc.beginPath();
+      lc.moveTo(x0, top);
+      lc.bezierCurveTo(x0 + drift * 0.25, top + len * 0.35,
+                       x0 + drift * 0.75, top + len * 0.72,
+                       x0 + drift, top + len);
+      lc.stroke();
     }
 
-    ctx.setLineDash([]);
-    ctx.globalCompositeOperation = 'source-over';
+    lc.setLineDash([]);
+    lc.globalCompositeOperation = 'source-over';
 
     // The cap above the crown was reading as a bright spike: fade it into the background so
     // the silhouette ends softly instead of with a lit edge.
     const gy0 = cy - ryTop, gy1 = cy - HEAD.h * 0.46;
-    const fade = ctx.createLinearGradient(0, gy0, 0, gy1);
+    const fade = lc.createLinearGradient(0, gy0, 0, gy1);
     fade.addColorStop(0, 'rgba(0,0,0,0.85)');
     fade.addColorStop(0.55, 'rgba(0,0,0,0.35)');
     fade.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = fade;
-    ctx.fillRect(cx - rx - 2, gy0 - 6, rx * 2 + 4, gy1 - gy0 + 6);
+    lc.fillStyle = fade;
+    lc.fillRect(cx - rx - 2, gy0 - 6, rx * 2 + 4, gy1 - gy0 + 6);
 
+    lc.restore();
+
+    // The bed and the strands were laid over the whole frame; keep only the part inside the hair
+    // shape, then hand the result to the page and to the colour pass.
+    lc.setTransform(1, 0, 0, 1, 0, 0);
+    lc.globalCompositeOperation = 'destination-in';
+    lc.drawImage(HAIR.shape, 0, 0);
+    lc.globalCompositeOperation = 'source-over';
+
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(HAIR.layer, 0, 0);
     ctx.restore();
   }
 
@@ -1141,14 +1175,33 @@
   function drawHairTint() {
     const amt = clamp(P.hairAmount ?? 0, 0, 1);
     const tint = clamp(P.hairTint ?? 0.6, 0, 1);
-    if (amt < 0.01 || tint < 0.01 || !HAIR.mask) return;
+    if (amt < 0.01 || tint < 0.01 || !HAIR.layer) return;
     const c = hsl2rgb(P.hairHue ?? 275, 0.75, 0.5);
     ctx.save();
     // 'color' keeps the cell's own luminance and takes only hue+saturation from the fill --
     // 'multiply' can only darken, which turned every hue into a muddy version of the theme.
+    // The stencil is the hair layer itself, cut out of a flat fill: the tint can only land where
+    // hair was actually painted. Deriving the region from geometry instead ("mass minus face")
+    // broke the moment a short cut did not enclose the face, and poured colour onto the chin.
+    const cv = ctx.canvas;
+    if (!HAIR.scratch || HAIR.scratch.width !== cv.width || HAIR.scratch.height !== cv.height) {
+      HAIR.scratch = document.createElement('canvas');
+      HAIR.scratch.width = cv.width;
+      HAIR.scratch.height = cv.height;
+    }
+    const sc = HAIR.scratch.getContext('2d');
+    sc.setTransform(1, 0, 0, 1, 0, 0);
+    sc.globalCompositeOperation = 'source-over';
+    sc.clearRect(0, 0, cv.width, cv.height);
+    sc.fillStyle = `rgba(${c[0]},${c[1]},${c[2]},${tint.toFixed(3)})`;
+    sc.fillRect(0, 0, cv.width, cv.height);
+    sc.globalCompositeOperation = 'destination-in';
+    sc.drawImage(HAIR.layer, 0, 0);
+    sc.globalCompositeOperation = 'source-over';
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalCompositeOperation = 'color';
-    ctx.fillStyle = `rgba(${c[0]},${c[1]},${c[2]},${tint.toFixed(3)})`;
-    ctx.fill(HAIR.tint || HAIR.mask, 'evenodd');
+    ctx.drawImage(HAIR.scratch, 0, 0);
     ctx.restore();
   }
 
@@ -1381,6 +1434,16 @@
   }
 
   /* ---------------------------------------------------------------- brows */
+  // One colour for both: with hair on, the brows take the hair's hue so the face reads as one
+  // piece instead of eyebrows lit in the theme colour under hair dyed something else.
+  function browColour() {
+    const on = Math.round(P.hairOn ?? 1) === 1;
+    const tint = clamp(P.hairTint ?? 0.6, 0, 1);
+    if (!on || tint < 0.02) return null;
+    const h = P.hairHue ?? 275;
+    return { main: hsl2rgb(h, 0.70, 0.44), dim: hsl2rgb(h, 0.80, 0.26) };
+  }
+
   function drawBrow(side) {
     const drift = side < 0 ? S.browL : S.browR;
     const bx = ux(side * (P.eyeU ?? 0.415));
@@ -1416,13 +1479,16 @@
     }
     ctx.closePath();
     const g = ctx.createLinearGradient(-len * 0.5, 0, len * 0.55, 0);
-    g.addColorStop(0, rgba(COL.main, 0.50));
-    g.addColorStop(0.55, rgba(COL.main, 0.76));
-    g.addColorStop(1, rgba(COL.dim, 0.34));
+    const hc = browColour();
+    const mainC = hc ? hc.main : COL.main;
+    const dimC = hc ? hc.dim : COL.dim;
+    g.addColorStop(0, rgba(mainC, 0.50));
+    g.addColorStop(0.55, rgba(mainC, 0.76));
+    g.addColorStop(1, rgba(dimC, 0.34));
     ctx.fillStyle = 'rgba(2,8,12,0.85)';
     ctx.fill();
     ctx.fillStyle = g;
-    ctx.shadowColor = rgba(COL.main, 0.65);
+    ctx.shadowColor = rgba(mainC, 0.65);
     ctx.shadowBlur = 12 * glow;
     ctx.fill();
     ctx.restore();
