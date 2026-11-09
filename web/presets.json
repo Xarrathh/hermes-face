@@ -72,7 +72,14 @@
    "jawDrop": 1.0,
    "browMotion": 0.5,
    "nostrilFlare": 0.55,
-   "earMotion": 0.35
+   "earMotion": 0.35,
+   "hairOn": 1,
+   "hairStyle": 0,
+   "hairEdge": 3,
+   "hairHue": 28,
+   "hairTint": 0.55,
+   "hairAmount": 0.42,
+   "hairLength": 0.55
   },
   "Male \u00b7 Sharp": {
    "faceShape": 3,
@@ -146,7 +153,14 @@
    "jawDrop": 1.0,
    "browMotion": 0.6,
    "nostrilFlare": 0.55,
-   "earMotion": 0.35
+   "earMotion": 0.35,
+   "hairOn": 1,
+   "hairStyle": 1,
+   "hairEdge": 1,
+   "hairHue": 18,
+   "hairTint": 0.5,
+   "hairAmount": 0.48,
+   "hairLength": 0.6
   },
   "Male \u00b7 Weathered": {
    "faceShape": 0,
@@ -220,7 +234,14 @@
    "jawDrop": 1.0,
    "browMotion": 0.45,
    "nostrilFlare": 0.55,
-   "earMotion": 0.35
+   "earMotion": 0.35,
+   "hairOn": 1,
+   "hairStyle": 0,
+   "hairEdge": 3,
+   "hairHue": 210,
+   "hairTint": 0.3,
+   "hairAmount": 0.3,
+   "hairLength": 0.45
   },
   "Male \u00b7 Young": {
    "faceShape": 1,
@@ -294,7 +315,14 @@
    "jawDrop": 1.0,
    "browMotion": 0.6,
    "nostrilFlare": 0.55,
-   "earMotion": 0.35
+   "earMotion": 0.35,
+   "hairOn": 1,
+   "hairStyle": 4,
+   "hairEdge": 0,
+   "hairHue": 42,
+   "hairTint": 0.62,
+   "hairAmount": 0.55,
+   "hairLength": 0.65
   },
   "Male \u00b7 Deep-set": {
    "faceShape": 0,
@@ -368,7 +396,14 @@
    "jawDrop": 1.0,
    "browMotion": 0.4,
    "nostrilFlare": 0.55,
-   "earMotion": 0.35
+   "earMotion": 0.35,
+   "hairOn": 1,
+   "hairStyle": 1,
+   "hairEdge": 2,
+   "hairHue": 14,
+   "hairTint": 0.52,
+   "hairAmount": 0.45,
+   "hairLength": 0.55
   },
   "Female \u00b7 Soft": {
    "faceShape": 1,
@@ -442,7 +477,14 @@
    "jawDrop": 1.0,
    "browMotion": 0.6,
    "nostrilFlare": 0.55,
-   "earMotion": 0.35
+   "earMotion": 0.35,
+   "hairOn": 1,
+   "hairStyle": 3,
+   "hairEdge": 4,
+   "hairHue": 26,
+   "hairTint": 0.7,
+   "hairAmount": 0.66,
+   "hairLength": 1.05
   },
   "Female \u00b7 Sleek": {
    "faceShape": 2,
@@ -516,7 +558,14 @@
    "jawDrop": 1.0,
    "browMotion": 0.6,
    "nostrilFlare": 0.55,
-   "earMotion": 0.35
+   "earMotion": 0.35,
+   "hairOn": 1,
+   "hairStyle": 1,
+   "hairEdge": 1,
+   "hairHue": 200,
+   "hairTint": 0.62,
+   "hairAmount": 0.58,
+   "hairLength": 0.85
   },
   "Female \u00b7 Bold": {
    "faceShape": 0,
@@ -590,7 +639,14 @@
    "jawDrop": 1.0,
    "browMotion": 0.5,
    "nostrilFlare": 0.55,
-   "earMotion": 0.35
+   "earMotion": 0.35,
+   "hairOn": 1,
+   "hairStyle": 2,
+   "hairEdge": 2,
+   "hairHue": 332,
+   "hairTint": 0.66,
+   "hairAmount": 0.6,
+   "hairLength": 0.9
   },
   "Female \u00b7 Elder": {
    "faceShape": 2,
@@ -664,7 +720,14 @@
    "jawDrop": 1.0,
    "browMotion": 0.6,
    "nostrilFlare": 0.55,
-   "earMotion": 0.35
+   "earMotion": 0.35,
+   "hairOn": 1,
+   "hairStyle": 2,
+   "hairEdge": 3,
+   "hairHue": 220,
+   "hairTint": 0.28,
+   "hairAmount": 0.34,
+   "hairLength": 0.75
   },
   "Female \u00b7 Cool": {
    "faceShape": 2,
@@ -738,7 +801,14 @@
    "jawDrop": 1.0,
    "browMotion": 0.6,
    "nostrilFlare": 0.55,
-   "earMotion": 0.35
+   "earMotion": 0.35,
+   "hairOn": 1,
+   "hairStyle": 2,
+   "hairEdge": 7,
+   "hairHue": 188,
+   "hairTint": 0.68,
+   "hairAmount": 0.58,
+   "hairLength": 0.88
   },
   "Robot": {
    "faceShape": 0,
@@ -812,7 +882,8 @@
    "jawDrop": 1.0,
    "browMotion": 0.0,
    "nostrilFlare": 0.0,
-   "earMotion": 0.35
+   "earMotion": 0.35,
+   "hairOn": 0
   },
   "Alien": {
    "faceShape": 3,
@@ -886,7 +957,8 @@
    "jawDrop": 1.0,
    "browMotion": 0.2,
    "nostrilFlare": 0.2,
-   "earMotion": 0.35
+   "earMotion": 0.35,
+   "hairOn": 0
   },
   "Goblin": {
    "faceShape": 1,
@@ -960,7 +1032,14 @@
    "jawDrop": 1.0,
    "browMotion": 0.9,
    "nostrilFlare": 0.9,
-   "earMotion": 0.9
+   "earMotion": 0.9,
+   "hairOn": 1,
+   "hairStyle": 4,
+   "hairEdge": 5,
+   "hairHue": 92,
+   "hairTint": 0.34,
+   "hairAmount": 0.26,
+   "hairLength": 0.7
   },
   "Spectre": {
    "faceShape": 3,
@@ -1034,7 +1113,8 @@
    "jawDrop": 0.7,
    "browMotion": 0.6,
    "nostrilFlare": 0.55,
-   "earMotion": 0.35
+   "earMotion": 0.35,
+   "hairOn": 0
   },
   "Marble": {
    "faceShape": 0,
@@ -1108,7 +1188,8 @@
    "jawDrop": 1.0,
    "browMotion": 0.6,
    "nostrilFlare": 0.55,
-   "earMotion": 0.35
+   "earMotion": 0.35,
+   "hairOn": 0
   },
   "Male \u00b7 Realistic": {
    "faceShape": 0,
@@ -1182,7 +1263,14 @@
    "jawDrop": 1.0,
    "browMotion": 0.6,
    "nostrilFlare": 0.55,
-   "earMotion": 0.45
+   "earMotion": 0.45,
+   "hairOn": 1,
+   "hairStyle": 0,
+   "hairEdge": 0,
+   "hairHue": 24,
+   "hairTint": 0.5,
+   "hairAmount": 0.46,
+   "hairLength": 0.58
   },
   "Male \u00b7 Youth": {
    "faceShape": 1,
@@ -1256,7 +1344,14 @@
    "jawDrop": 1.0,
    "browMotion": 0.65,
    "nostrilFlare": 0.6,
-   "earMotion": 0.5
+   "earMotion": 0.5,
+   "hairOn": 1,
+   "hairStyle": 4,
+   "hairEdge": 0,
+   "hairHue": 38,
+   "hairTint": 0.6,
+   "hairAmount": 0.52,
+   "hairLength": 0.62
   },
   "Male \u00b7 Mature": {
    "faceShape": 3,
@@ -1330,7 +1425,14 @@
    "jawDrop": 1.15,
    "browMotion": 0.5,
    "nostrilFlare": 0.6,
-   "earMotion": 0.55
+   "earMotion": 0.55,
+   "hairOn": 1,
+   "hairStyle": 1,
+   "hairEdge": 3,
+   "hairHue": 206,
+   "hairTint": 0.36,
+   "hairAmount": 0.34,
+   "hairLength": 0.5
   },
   "Female \u00b7 Realistic": {
    "faceShape": 1,
@@ -1404,7 +1506,14 @@
    "jawDrop": 0.9,
    "browMotion": 0.65,
    "nostrilFlare": 0.6,
-   "earMotion": 0.5
+   "earMotion": 0.5,
+   "hairOn": 1,
+   "hairStyle": 3,
+   "hairEdge": 4,
+   "hairHue": 30,
+   "hairTint": 0.68,
+   "hairAmount": 0.64,
+   "hairLength": 1.02
   },
   "Female \u00b7 Youth": {
    "faceShape": 1,
@@ -1478,7 +1587,14 @@
    "jawDrop": 0.9,
    "browMotion": 0.65,
    "nostrilFlare": 0.6,
-   "earMotion": 0.5
+   "earMotion": 0.5,
+   "hairOn": 1,
+   "hairStyle": 2,
+   "hairEdge": 0,
+   "hairHue": 350,
+   "hairTint": 0.64,
+   "hairAmount": 0.58,
+   "hairLength": 0.92
   },
   "Female \u00b7 Mature": {
    "faceShape": 2,
@@ -1552,7 +1668,14 @@
    "jawDrop": 0.85,
    "browMotion": 0.45,
    "nostrilFlare": 0.6,
-   "earMotion": 0.5
+   "earMotion": 0.5,
+   "hairOn": 1,
+   "hairStyle": 2,
+   "hairEdge": 3,
+   "hairHue": 214,
+   "hairTint": 0.3,
+   "hairAmount": 0.36,
+   "hairLength": 0.8
   },
   "Style \u00b7 Photoreal": {
    "faceShape": 0,
@@ -1626,7 +1749,14 @@
    "jawDrop": 1.0,
    "browMotion": 0.65,
    "nostrilFlare": 0.6,
-   "earMotion": 0.5
+   "earMotion": 0.5,
+   "hairOn": 1,
+   "hairStyle": 2,
+   "hairEdge": 0,
+   "hairHue": 22,
+   "hairTint": 0.7,
+   "hairAmount": 0.6,
+   "hairLength": 0.95
   },
   "Style \u00b7 Hologram": {
    "faceShape": 1,
@@ -1700,7 +1830,14 @@
    "jawDrop": 1.0,
    "browMotion": 0.65,
    "nostrilFlare": 0.6,
-   "earMotion": 0.5
+   "earMotion": 0.5,
+   "hairOn": 1,
+   "hairStyle": 1,
+   "hairEdge": 1,
+   "hairHue": 185,
+   "hairTint": 0.8,
+   "hairAmount": 0.55,
+   "hairLength": 0.85
   }
  }
 }

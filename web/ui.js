@@ -180,6 +180,9 @@
   }
 
   let PRESETS = { builtin: {}, custom: {} };
+  // The hair parameters, so applying a preset that predates hair keeps the current cut.
+  const HAIR_KEYS = ['hairOn', 'hairStyle', 'hairEdge', 'hairLine', 'hairAmount', 'hairDensity',
+                     'hairLength', 'hairSway', 'hairShine', 'hairHue', 'hairTint'];
 
   async function loadPresets() {
     try {
@@ -258,6 +261,11 @@
   function applyPreset(name) {
     const base = defaults();
     const over = Object.assign({}, (PRESETS.builtin || {})[name] || {}, (PRESETS.custom || {})[name] || {});
+    // A preset saved before hair existed has no hair keys; without this it would silently reset
+    // the hair to schema defaults and take his cut away. Keep what he is wearing in that case.
+    if (over.hairOn === undefined) {
+      for (const k of HAIR_KEYS) if (k in P) over[k] = P[k];
+    }
     P = Object.assign(base, over);
     api().setParams(P);
     syncInputs();
