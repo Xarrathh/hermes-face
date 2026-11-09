@@ -15,7 +15,10 @@ PREFIX="${HERMES_FACE_PREFIX:-$HOME/.local/share/hermes-face}"
 PEER_PORT="${HERMES_FACE_PEER_PORT:-9910}"
 PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOG="$HOME/.cache/hermes-face-bar.log"
-UNIT="$HOME/.config/systemd/user/face-peer.service"
+# Overridable so a dry run can be pointed at a scratch path: a fixed unit path means a
+# "test with a temp prefix" silently rewrites the live service, which it did once.
+UNIT="${HERMES_FACE_PEER_UNIT:-$HOME/.config/systemd/user/face-peer.service}"
+DRY="${HERMES_FACE_PEER_DRY:-0}"
 say() { printf '%s %s\n' "$(date '+%F %T')" "$*" >>"$LOG"; }
 PY="$PREFIX/.venv/bin/python"
 [ -x "$PY" ] || PY="$(command -v python3)"
@@ -32,8 +35,11 @@ if [ -f "$UNIT" ] && [ -z "${HERMES_FACE_NAME:-}" ] && [ -z "${HERMES_FACE_ID:-}
 fi
 
 mkdir -p "$PREFIX" || exit 1
-install -Dm755 "$PLUGIN_DIR/face/peer.py" "$PREFIX/peer.py" || { say "peer: cannot install peer.py"; exit 1; }
-say "peer: installed peer.py as $ID"
+# One source of truth: the sidecar ships in peering/ and is not mirrored into the plugin.
+# A bundled copy is how three boxes ended up running three builds.
+install -Dm755 "$PLUGIN_DIR/../peering/face_peer.py" "$PREFIX/face_peer.py" \
+  || { say "peer: cannot install face_peer.py"; exit 1; }
+say "peer: installed face_peer.py as $ID"
 
 mkdir -p "$(dirname "$UNIT")"
 cat > "$UNIT" <<EOF
@@ -44,8 +50,8 @@ After=hermes-face.service
 [Service]
 Type=simple
 WorkingDirectory=$PREFIX
-ExecStart=$PY $PREFIX/peer.py --name $NAME --id $ID --port $PEER_PORT \\
-  --face-url http://127.0.0.1:$PORT --token-file $PREFIX/token --key-file $PREFIX/peer.key --relay
+ExecStart=$PY $PREFIX/face_peer.py --name $NAME --id $ID --port $PEER_PORT \\
+  --face-url http://127.0.0.1:$PORT --token-file $PREFIX/token --key-file $PREFIX/peer.key --auto-reply
 Environment=PYTHONUNBUFFERED=1
 Restart=always
 RestartSec=3
@@ -53,6 +59,10 @@ RestartSec=3
 [Install]
 WantedBy=default.target
 EOF
+if [ "$DRY" = "1" ]; then
+  say "peer: dry run — nothing enabled, nothing restarted"
+  exit 0
+fi
 systemctl --user daemon-reload >/dev/null 2>&1 || true
 systemctl --user enable face-peer.service >/dev/null 2>&1 || true
 # restart, not enable --now: an already-running unit is not restarted by --now, and the point of
@@ -94,7 +104,7 @@ if [ -n "${SUBNET:-}" ]; then
 # Applies to the running ruleset; re-apply after a reboot or include this file from your own
 # nftables configuration if you want it persistent.
 add rule inet filter input ip saddr $SUBNET tcp dport $PEER_PORT accept
-add rule inet filter input ip saddr $SUBNET udp dport 9910 accept
+add rule inet filter input ip saddr $SUBNET udp dport 9998 accept
 EOF
   echo "Firewall rule written to $NUGGET (LAN only):"
   sed 's/^/  /' "$NUGGET" | grep -v '^  #'
