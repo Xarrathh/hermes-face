@@ -283,6 +283,7 @@
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(P),
         });
+        if (!r.ok) throw new Error('save refused: ' + r.status);
         const j = await r.json();
         if (j && j.params) P = Object.assign(P, j.params);
         saveState.textContent = 'saved';
@@ -348,6 +349,39 @@
       else saveState.textContent = 'tts failed';
     } catch { saveState.textContent = 'tts failed'; }
   });
+
+  /* --------------------------------------------------------------- name */
+  // The name other faces use to address this one lives in peering.json, which the sidecar
+  // re-reads on every beacon: saving here changes it on the network without a restart.
+  async function loadIdentity() {
+    try {
+      const r = await fetch('/identity', { cache: 'no-store' });
+      if (!r.ok) return;
+      const j = await r.json();
+      const nameEl = $('#faceName');
+      const aliasEl = $('#faceAliases');
+      if (nameEl && !nameEl.value) nameEl.value = j.name || '';
+      if (aliasEl && !aliasEl.value) aliasEl.value = (j.aliases || []).join(', ');
+    } catch { /* the panel is a convenience, never a prerequisite */ }
+  }
+
+  $('#faceNameSave').addEventListener('click', async () => {
+    const name = ($('#faceName').value || '').trim();
+    const aliases = ($('#faceAliases').value || '').split(',').map((a) => a.trim()).filter(Boolean);
+    if (!name) { saveState.textContent = 'name required'; return; }
+    saveState.textContent = 'saving name…';
+    try {
+      const r = await fetch('/identity', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name, aliases }),
+      });
+      const j = await r.json();
+      saveState.textContent = j.ok ? 'name saved: ' + j.name : (j.error || 'name not saved');
+    } catch { saveState.textContent = 'name not saved'; }
+  });
+
+  loadIdentity();
 
   $('#reset').addEventListener('click', () => {
     P = defaults();
@@ -588,7 +622,28 @@
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ text }),
       });
-      if (r.status === 409) heardEl.textContent = 'still thinking — one moment';
+      if (r.status === 409) {
+        // 409 is a refusal too, so it has to leave before the generic branch or the wording
+        // below overwrites this line on the same tick.
+        heardEl.textContent = 'still thinking — one moment';
+        if (!line.value) line.value = text;
+        return;
+      }
+      if (!r.ok) {
+        // The bridge refuses an over-long turn (413) and a malformed one (400), and before
+        // this the words were already cleared from the line and the caption still read
+        // "you: <the whole paste>" — the message looked sent and never was.
+        let why = 'the bridge refused that (' + r.status + ')';
+        try {
+          const j = await r.json();
+          if (j && j.error) why = String(j.error);
+        } catch { /* not JSON: keep the status */ }
+        heardEl.textContent = why;
+        if (!line.value) line.value = text;      // give the words back; they were not sent
+        said.textContent = '';
+        busy = wasBusy;
+        return;
+      }
     } catch {
       heardEl.textContent = 'the agent bridge is down';
     }
@@ -627,6 +682,9 @@
 
   document.addEventListener('click', (e) => {
     if (!panel.classList.contains('open') || panel.contains(e.target) || e.target.id === 'gear') return;
+    // The history drawer is a reading surface: taking the caret out of it meant Escape and the
+    // scroll keys went to the chat line while the panel was open.
+    if (e.target.closest && e.target.closest('#histPanel')) return;
     line.focus();
   });
   addEventListener('load', () => line.focus());
@@ -646,7 +704,13 @@
       const r = await fetch('/params', { cache: 'no-store' });
       const fresh = await r.json();
       if (fresh && typeof fresh === 'object') {
+        // The model has to move with the face, not just the paint. It did not, and the very
+        // next slider drag posted the stale `P` back: the theme hook's colours survived
+        // exactly one touch. Reproduced — hue 30 written externally, one headWidth nudge,
+        // hue back to 141 in config.json.
+        P = Object.assign(P, fresh);
         api().setParams(fresh);
+        syncInputs();
         document.dispatchEvent(new CustomEvent('face:params', { detail: fresh }));
       }
     } catch { /* the next revision change will try again */ }
@@ -699,19 +763,11 @@
       }
       api().setState(state);
       api().setMood(st.mood || 'neutral');
-      // the webcam tracker (sidecar on :9122): follow the face while it is fresh, fall
-      // back to the face's own saccades when the room is empty or the tracker is down
-      api().setGazeTarget && fetch('http://127.0.0.1:9122/gaze', { cache: 'no-store' })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((gz) => {
-          if (!api().setGazeTarget) return;
-          if (gz && gz.seen && Date.now() / 1000 - (gz.t || 0) < 2.0) {
-            api().setGazeTarget(gz.x, gz.y);
-          } else {
-            api().releaseGaze();
-          }
-        })
-        .catch(() => { if (api().releaseGaze) api().releaseGaze(); });
+      // A webcam gaze sidecar on :9122 used to be polled here. It is not shipped by this
+      // plugin, so on every install it was a cross-origin request to a closed port twice a
+      // second — and it is what the page's Content-Security-Policy (`connect-src 'self'`)
+      // would block. face.js still exposes setGazeTarget()/releaseGaze() for a harness; a
+      // sidecar needs its own opt-in and its own CSP entry rather than a dead fetch.
       document.body.dataset.state = state;
       stateLabel.textContent = LABEL[state] || state;
       // a silent failure is the worst failure here: put it where he is looking

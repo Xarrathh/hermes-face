@@ -8,7 +8,15 @@
  from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
  from pathlib import Path
  
-@@ -173,6 +174,17 @@
+@@ -81,6 +82,7 @@
+                      or f"/run/user/{os.getuid()}/voxtype/state")
+ 
+ PORT = int(os.environ.get("HERMES_FACE_PORT", "9120"))
++PEERING = HERE / "peering.json"
+ # A POST body is a sentence or a dictionary of numbers; anything larger is a mistake or an
+ # attack, and reading it whole would let one request exhaust the bridge's memory.
+ MAX_BODY = 1 << 20
+@@ -173,6 +175,17 @@
      "and is never shown, so nothing else belongs in the brackets.\n\n"
  )
  
@@ -26,7 +34,7 @@
  MOODS = ("neutral", "warm", "amused", "curious", "excited", "serious", "concerned", "dry")
  MOOD_TAG = re.compile(r"^\s*\[([a-z][a-z \-]{1,19})\]\s*", re.I)
  
-@@ -255,7 +267,20 @@
+@@ -255,7 +268,20 @@
          out = ""
      caps["query_file"] = "--query-file" in out
      caps["create_if_missing"] = "--create-if-missing" in out
@@ -48,7 +56,7 @@
      if os.environ.get("HERMES_FACE_FORCE_OLD_CLI") == "1":
          # Test hook: exercise the pre-0.20 command line on a modern CLI.
          caps = {"query_file": False, "create_if_missing": False, "stream_json": False}
-@@ -930,7 +955,53 @@
+@@ -930,7 +956,53 @@
      return f"Unknown command {cmd}. Try slash help."
  
  
@@ -103,7 +111,7 @@
      heard = text.strip()
      if not heard:
          set_if_current(seq, agent="idle")
-@@ -946,6 +1017,17 @@
+@@ -946,6 +1018,17 @@
          with LOCK:
              new_sid = STATE["session"]
      else:
@@ -121,7 +129,24 @@
          qfile = AUDIO / f"q-{int(time.time() * 1000)}.txt"
          fd = os.open(qfile, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
          with os.fdopen(fd, "w", encoding="utf-8") as fh:
-@@ -1399,9 +1481,77 @@
+@@ -1319,6 +1402,16 @@
+             # answer "which binary" or "every path we probed for one": the agent's location is
+             # a map of the box, and the authed /state already carries it.
+             return self._json({"ok": True, "agent": hermes_available()})
++        if path == "/identity":
++            try:
++                cfg = json.loads(PEERING.read_text(encoding="utf-8"))
++                if not isinstance(cfg, dict):
++                    cfg = {}
++            except (OSError, json.JSONDecodeError):
++                cfg = {}
++            return self._json({"name": cfg.get("name") or "",
++                               "aliases": cfg.get("aliases") or []})
++
+         if path.startswith("/audio/"):
+             name = os.path.basename(path)
+             f = AUDIO / name
+@@ -1399,9 +1492,106 @@
                  STATE.update(agent="thinking", mood="curious", heard=text.strip(),
                               reply="", error="", audio=None, audio_parts=[])
              prune_audio(seq)
@@ -197,10 +222,39 @@
 +            _auto_idle_after(size / 6000.0 + 4.0, seq)
 +            return self._json({"ok": True, "seq": seq, "audio": f"/audio/{name}"})
 +
++        if path == "/identity":
++            # This face's spoken name, written where face-peer reads it. The panel is the place a
++            # person looks, so the panel must be able to change it: a file-only setting is the
++            # reason "where do I put the name" had no answer.
++            name = str(payload.get("name") or "").strip()[:40]
++            aliases = payload.get("aliases")
++            if not name:
++                return self._json({"error": "name required"}, 400)
++            cfg = {}
++            try:
++                cfg = json.loads(PEERING.read_text(encoding="utf-8"))
++                if not isinstance(cfg, dict):
++                    cfg = {}
++            except (OSError, json.JSONDecodeError):
++                cfg = {}
++            cfg["name"] = name
++            if isinstance(aliases, list):
++                cfg["aliases"] = [str(a).strip()[:40] for a in aliases if str(a).strip()][:12]
++            elif isinstance(aliases, str):
++                cfg["aliases"] = [a.strip()[:40] for a in aliases.split(",") if a.strip()][:12]
++            cfg.setdefault("aliases", [name.lower()])
++            tmp = HERE / ".peering.tmp"
++            try:
++                tmp.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
++                os.replace(tmp, PEERING)
++            except OSError as exc:
++                return self._json({"error": f"cannot write peering.json: {exc}"}, 500)
++            return self._json({"ok": True, "name": cfg["name"], "aliases": cfg["aliases"]})
++
          if path == "/history/clear":
              with HIST_LOCK:
                  save_history({"sessions": []})
-@@ -1548,4 +1698,4 @@
+@@ -1548,4 +1738,4 @@
  
  
  if __name__ == "__main__":
