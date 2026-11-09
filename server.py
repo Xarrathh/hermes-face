@@ -995,8 +995,27 @@ def run_turn(text: str, seq: int) -> None:
                 break
             tail = (err or "").strip().splitlines()
             last = tail[-1][:200] if tail else ""
-            if "live owner" in last and attempt < 3:
+            # The session is still held by the previous run: retry rather than reporting a
+            # failure. The phrase can be anywhere in stderr -- taking only the last line missed
+            # it whenever the CLI appended its session id afterwards.
+            held = any(("live owner" in ln) or ("is live" in ln) or ("locked" in ln) for ln in tail)
+            if held and attempt < 3:
                 time.sleep(0.6 * (attempt + 1))     # the dead run's lock is clearing
+                continue
+            # A resume that produced nothing but a session id means that session is unusable
+            # (usually still owned by the process that just wrote it). Start a fresh face
+            # session instead of failing: a lost thread is better than a dead face.
+            if attempt < 2 and (not reply or "session:" in last.lower()):
+                cut = len(cmd)
+                for flag in ("--resume", "--continue"):
+                    if flag in cmd:
+                        cut = min(cut, cmd.index(flag))
+                base = cmd[:cut]
+                if caps["create_if_missing"]:
+                    base += ["--continue", FACE_SESSION, "--create-if-missing"]
+                cmd = base
+                new_sid = FACE_SESSION
+                time.sleep(0.4)
                 continue
             reply = "The agent did not return an answer." + (f" ({last[:160]})" if last else "")
             break
