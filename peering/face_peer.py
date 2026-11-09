@@ -149,6 +149,16 @@ def ask_agent(args: argparse.Namespace, peer_name: str, text: str) -> tuple[str,
     """Run a real agent turn so the answer is this face's own, then read it and its audio back."""
     prompt = (f"{peer_name} (another Hermes face on this LAN) said: {text}\n"
               "Reply to them in one short spoken sentence, no markdown.")
+    # Whatever the face spoke before this call is not this turn's answer. Handing that name
+    # back relays a stale clip, and the listener hears the previous line again in the voice of
+    # whoever said it last -- which reads as an echo.
+    before = ""
+    try:
+        st0 = face_state(args)
+        parts0 = st0.get("audio_parts") or []
+        before = str(parts0[-1]) if parts0 else str(st0.get("audio") or "")
+    except Exception:                              # noqa: BLE001
+        pass
     try:
         face_call(args, "/say", {"text": prompt})
     except Exception as exc:                       # noqa: BLE001
@@ -166,13 +176,18 @@ def ask_agent(args: argparse.Namespace, peer_name: str, text: str) -> tuple[str,
         # be caught while it is still speaking -- reading only the final state always
         # reports "no audio" and the relay silently degrades to text.
         parts = st.get("audio_parts") or []
-        if parts:
+        if parts and str(parts[-1]) != before:
             last_name = str(parts[-1]).rsplit("/", 1)[-1]
-        elif st.get("audio"):
+        elif st.get("audio") and str(st["audio"]) != before:
             last_name = str(st["audio"]).rsplit("/", 1)[-1]
+        if st.get("error"):
+            # A failed turn writes its complaint into `reply`, and speaking it aloud turns a
+            # broken bridge into the face answering with an error message. Nothing is relayed.
+            log(f"turn error on this side: {st['error'][:140]}")
+            return "", ""
         if st.get("agent") == "idle" and (st.get("reply") or "").strip():
             return str(st["reply"]).strip(), last_name
-    return "", last_name
+    return "", ""
 
 
 # ------------------------------------------------------------------ transport
