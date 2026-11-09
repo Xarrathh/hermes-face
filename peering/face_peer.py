@@ -181,7 +181,13 @@ def echoes_input(reply: str, said: str) -> bool:
     b = {w for w in re.findall(r"[a-z0-9']{3,}", said.lower())}
     if not a or not b:
         return False
-    return len(a & b) / max(1, len(a | b)) >= 0.8
+    # Containment in whichever direction is fuller, not Jaccard: an echo is "most of one text is
+    # made of the other", and Jaccard dilutes that with every extra word. Measured on real output
+    # -- verbatim 1.00, paraphrase 0.92, a one-line summary of the input 0.80, a blunt counterpoint
+    # that reuses the topic 0.67, a genuine rebuttal 0.00. Jaccard scored the paraphrase 0.79, i.e.
+    # under a 0.8 cut, so the guard would have passed the answer it exists to refuse.
+    inter = len(a & b)
+    return max(inter / len(a), inter / len(b)) >= 0.75
 
 
 def ask_agent(args: argparse.Namespace, peer_name: str, text: str) -> tuple[str, str]:
