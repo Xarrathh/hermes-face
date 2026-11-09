@@ -1,0 +1,58 @@
+--- /home/pierregoosen/.local/share/hermes-face/server.py	2026-11-09 10:53:36.923807023 +0200
++++ facetree/server.py	2026-11-09 12:27:14.958330677 +0200
+@@ -1402,6 +1402,48 @@
+             threading.Thread(target=run_turn, args=(text, seq), daemon=True).start()
+             return self._json({"ok": True, "seq": seq})
+ 
++        if path == "/speak":
++            # Verbatim speech for the peer layer: the text is spoken as written, with no
++            # agent turn behind it, so a face can deliver a line that is not its own answer.
++            # The sequence number is shared with /say, so an arriving peer line cancels a
++            # turn in progress exactly as a new spoken command does.
++            text = str(payload.get("text") or "").strip()
++            if not text:
++                return self._json({"error": "empty"}, 400)
++            if len(text) > MAX_SPOKEN:
++                return self._json({"error": f"text too long (limit {MAX_SPOKEN} characters)"}, 413)
++            _kill_turn()
++            with LOCK:
++                STATE["seq"] += 1
++                seq = STATE["seq"]
++                STATE.update(agent="thinking", mood=guess_mood(text),
++                             heard=str(payload.get("from") or "peer")[:60],
++                             reply=text, error="", audio=None, audio_parts=[])
++            prune_audio(seq)
++            out = AUDIO / f"peer-{seq}.mp3"
++
++            def speak_peer_line() -> None:
++                try:
++                    speech = clean_for_speech(text).strip()
++                    if not speech:
++                        raise RuntimeError("nothing left to say")
++                    synth(speech, out)
++                    if out.stat().st_size == 0:
++                        raise RuntimeError("edge-tts wrote an empty file")
++                except Exception as exc:               # noqa: BLE001
++                    set_if_current(seq, agent="idle", error=f"speech failed: {exc}")
++                    return
++                with LOCK:
++                    if STATE["seq"] != seq:
++                        return
++                    STATE["audio"] = f"/audio/{out.name}"
++                    STATE["audio_parts"].append(STATE["audio"])
++                    STATE["agent"] = "speaking"
++                _auto_idle_after(out.stat().st_size / 6000.0 + 4.0, seq)
++
++            threading.Thread(target=speak_peer_line, daemon=True).start()
++            return self._json({"ok": True, "seq": seq})
++
+         if path == "/history/clear":
+             with HIST_LOCK:
+                 save_history({"sessions": []})
+@@ -1548,4 +1590,4 @@
+ 
+ 
+ if __name__ == "__main__":
+-    main()
++    main()
+\ No newline at end of file

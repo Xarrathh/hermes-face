@@ -1,0 +1,18 @@
+[Unit]
+Description=face-peer — LAN presence and turn-taking for hermes-face
+After=hermes-face.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pierregoosen/.local/share/hermes-face
+ExecStart=/home/pierregoosen/.local/share/hermes-face/.venv/bin/python /home/pierregoosen/.local/share/hermes-face/face_peer.py --name Suzie --id face-suzie --port 9910 --face-url http://127.0.0.1:9120 --token-file /home/pierregoosen/.local/share/hermes-face/token --auto-reply
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/pierregoosen/.local/share/hermes-face
+
+[Install]
+WantedBy=default.target
