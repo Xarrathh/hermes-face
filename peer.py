@@ -28,13 +28,33 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "1.1"
+VERSION = "1.2"
 PRESENT_TTL = 8.0          # seconds of beacon silence before a peer is "gone"
 GREET_COOLDOWN = 900.0    # one greeting per peer per 15 minutes
 BEACON_EVERY = 2.0
 AUDIO_NAME = re.compile(r"[A-Za-z0-9._-]{1,64}\.mp3")
 
 LOG_LOCK = threading.Lock()
+
+# The dialogue, as it happens: one JSON object per line, so a person can read the exchange the way
+# they would read a chat, and the face can show it. Text only — the audio is relayed separately.
+TRANSCRIPT = Path(os.path.expanduser("~/.local/share/hermes-face/conversation.jsonl"))
+
+
+def record(who: str, text: str, reply: str = "") -> None:
+    """Append one line of the conversation, trimmed to something readable."""
+    try:
+        TRANSCRIPT.parent.mkdir(parents=True, exist_ok=True)
+        entry = {"t": round(time.time(), 3), "from": who, "text": text[:280],
+                 "reply": (reply or "")[:280]}
+        with LOG_LOCK:
+            with TRANSCRIPT.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            if TRANSCRIPT.stat().st_size > 256_000:      # keep the tail, not a growing archive
+                lines = TRANSCRIPT.read_text(encoding="utf-8").splitlines()[-400:]
+                TRANSCRIPT.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except OSError:
+        pass
 # Shared secret for this LAN of faces, read from a file at start (never from argv: a key on a
 # command line is visible to every local account through /proc). Empty means "not configured",
 # and every peer endpoint refuses instead of trusting whatever asks.
@@ -437,6 +457,24 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         if path == "/health":
             return self._json({"ok": True, "who": self.args.id, "version": VERSION})
+        if path == "/transcript":
+            # The exchange as text, newest last, so a person can watch the two faces talk.
+            if not self._authorised():
+                return self._json({"error": "peer key required"}, 403)
+            try:
+                want = int(urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "").get("limit", ["40"])[0])
+            except (ValueError, IndexError):
+                want = 40
+            lines: list[dict] = []
+            try:
+                for raw in TRANSCRIPT.read_text(encoding="utf-8").splitlines()[-max(1, min(want, 400)):]:
+                    try:
+                        lines.append(json.loads(raw))
+                    except json.JSONDecodeError:
+                        continue
+            except OSError:
+                pass
+            return self._json({"me": self.args.name, "lines": lines})
         if path == "/peers":
             if not self._authorised():
                 return self._json({"error": "peer key required"}, 403)
@@ -539,6 +577,7 @@ class Handler(BaseHTTPRequestHandler):
             reply = str(answer.get("reply") or "")
             relayed = relay_audio(self.args, peer, str(answer.get("audio") or "")) if self.args.relay else False
             log(f"asked {peer.get('name')}: {text[:60]!r} -> reply={reply[:60]!r} relayed={relayed}")
+            record(self.args.name, text, reply)
             return self._json({"ok": True, "peer": peer.get("name"), "reply": reply,
                                "relayed_audio": relayed})
 

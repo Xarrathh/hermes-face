@@ -21,7 +21,15 @@ PY="$PREFIX/.venv/bin/python"
 [ -x "$PY" ] || PY="$(command -v python3)"
 
 NAME="${HERMES_FACE_NAME:-$(hostname -s)}"
-ID="face-$(printf '%s' "$NAME" | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9-')"
+ID="${HERMES_FACE_ID:-face-$(printf '%s' "$NAME" | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9-')}"
+# Keep the identity this machine already had: changing the id mid-conversation makes the other face
+# treat us as a stranger and re-greet from scratch. An explicit environment wins over the old unit.
+if [ -f "$UNIT" ] && [ -z "${HERMES_FACE_NAME:-}" ] && [ -z "${HERMES_FACE_ID:-}" ]; then
+  old_name="$(sed -n 's/.*--name \([^ ]*\).*/\1/p' "$UNIT" | head -1)"
+  old_id="$(sed -n 's/.*--id \([^ ]*\).*/\1/p' "$UNIT" | head -1)"
+  [ -n "$old_name" ] && NAME="$old_name"
+  [ -n "$old_id" ] && ID="$old_id"
+fi
 
 mkdir -p "$PREFIX" || exit 1
 install -Dm755 "$PLUGIN_DIR/face/peer.py" "$PREFIX/peer.py" || { say "peer: cannot install peer.py"; exit 1; }
@@ -46,7 +54,10 @@ RestartSec=3
 WantedBy=default.target
 EOF
 systemctl --user daemon-reload >/dev/null 2>&1 || true
-systemctl --user enable --now face-peer.service >/dev/null 2>&1 || true
+systemctl --user enable face-peer.service >/dev/null 2>&1 || true
+# restart, not enable --now: an already-running unit is not restarted by --now, and the point of
+# running this script is to put the new code in front of the socket.
+systemctl --user restart face-peer.service >/dev/null 2>&1 || true
 sleep 1
 say "peer: $(systemctl --user is-active face-peer.service 2>/dev/null || echo unknown)"
 
