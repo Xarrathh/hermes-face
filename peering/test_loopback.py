@@ -100,8 +100,17 @@ class MockFace:
                 n = int(self.headers.get("Content-Length") or 0)
                 body = json.loads(self.rfile.read(n) or b"{}")
                 if self.path == "/speak":
+                    # Behave like the real bridge: publish an audio part, or the sidecar's
+                    # last_audio() polls for 25 s and the whole exchange stalls behind it.
                     mock.spoken.append(str(body.get("text")))
-                    return self._j({"ok": True})
+                    mock.seq += 1
+                    name = f"peer-{mock.seq}.mp3"
+                    (mock.audio / name).write_bytes(b"ID3" + b"z" * 3000)
+                    mock.state.update(agent="speaking", audio=f"/audio/{name}",
+                                      audio_parts=[f"/audio/{name}"])
+                    threading.Timer(0.6, lambda: mock.state.update(agent="idle", audio=None,
+                                                                   audio_parts=[])).start()
+                    return self._j({"ok": True, "seq": mock.seq})
                 if self.path == "/play":
                     mock.plays.append(str(body.get("file")))
                     return self._j({"ok": True})
@@ -174,7 +183,7 @@ def wait_up(port: int, timeout: float = 40.0) -> float:
 
 
 def start_sidecar(root: Path, tag: str, face_port: int, tcp: int, beacon: int, send_port: int,
-                  verbose: bool):
+                  verbose: bool, max_turns: int = 20):
     d = root / tag
     (d / "audio").mkdir(parents=True, exist_ok=True)
     (d / "peering.json").write_text(json.dumps({"name": tag.upper(), "aliases": [tag.lower()]}))
@@ -186,7 +195,7 @@ def start_sidecar(root: Path, tag: str, face_port: int, tcp: int, beacon: int, s
            "--face-url", f"http://127.0.0.1:{face_port}",
            "--token-file", str(d / "token"), "--key-file", str(d / "peer.key"),
            "--audio-dir", str(d / "audio"), "--config-file", str(d / "peering.json"),
-           "--auto-reply", "--reply-timeout", "8",
+           "--auto-reply", "--reply-timeout", "8", "--max-turns", str(max_turns),
            "--greet", "Hello, {name}. I can see you."]
     out = None if verbose else open(root / f"{tag}.log", "w")
     return subprocess.Popen(cmd, stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
@@ -235,7 +244,23 @@ def run(verbose: bool = False) -> int:
         check("/route handles a verb form", out.get("handled") is True and out.get("text") == "how it is",
               json.dumps(out)[:100])
 
-        # ---- a debate: each face argues on its own box, and no line repeats its input
+        # ---- a debate asked for by name must make the asking face speak its own rounds
+        alpha_turns, beta_turns = len(a_face.turns), len(b_face.turns)
+        status, out = http("http://127.0.0.1:9911/route",
+                           {"text": "argue with BETA about South Africa's growth"}, key=KEY)
+        check("/route starts a debate when asked to argue", out.get("debate") is True,
+              json.dumps(out)[:110])
+        check("the acknowledgement names the debate", "Arguing with BETA" in str(out.get("ack")),
+              str(out.get("ack")))
+        deadline = time.time() + 25
+        while time.time() < deadline and len(b_face.turns) < beta_turns + 3:
+            time.sleep(0.5)
+        check("the debate ran rounds on both boxes",
+              len(b_face.turns) >= beta_turns + 3 and len(a_face.turns) >= alpha_turns + 1,
+              f"peer turns +{len(b_face.turns) - beta_turns}, own turns +{len(a_face.turns) - alpha_turns}")
+
+
+        # ---- a debate asked for directly: each face argues on its own box, and no line repeats its input
         status, out = http("http://127.0.0.1:9911/talk",
                            {"to": "BETA", "rounds": 3,
                             "text": "South Africa's growth is overstated."}, key=KEY)
@@ -267,7 +292,7 @@ def run(verbose: bool = False) -> int:
         # test that starts at the cap would pass without proving anything.
         b.send_signal(signal.SIGTERM)
         time.sleep(1.5)
-        b = start_sidecar(root, "beta", 9212, 9912, 9992, 9991, verbose)
+        b = start_sidecar(root, "beta", 9212, 9912, 9992, 9991, verbose, max_turns=6)
         check("restarted peer answers again", wait_up(9912) >= 0, "")
         time.sleep(2.0)
         caps = []

@@ -283,7 +283,19 @@ def load_identity(args: argparse.Namespace) -> tuple[str, list[str]]:
     return name, aliases
 
 
-ADDRESS_VERBS = ("ask", "tell", "say to", "speak to", "vra", "sê vir", "se vir")
+ADDRESS_VERBS = ("ask", "tell", "say to", "speak to", "vra", "sê vir", "se vir",
+                 "argue with", "debate with", "disagree with", "redetwis met")
+
+# A sentence that names a face and asks for an argument should start one, not deliver a single
+# line and stop: /route delegates one message, while a debate needs the asking face to speak its
+# own rounds too. These cues are matched anywhere in the sentence, before the address is stripped.
+DEBATE_CUES = ("argue", "argument", "debate", "disagree", "dispute", "discuss",
+               "redetwis", "stryd", "debat")
+
+
+def wants_debate(text: str) -> bool:
+    low = text.lower()
+    return any(cue in low for cue in DEBATE_CUES)
 
 
 def route_target(text: str, peers: list[dict], me: list[str]) -> tuple[dict | None, str]:
@@ -488,6 +500,22 @@ class Handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             return {}
 
+    def _debate(self, peer: dict, text: str, rounds: int) -> None:
+        """Run the debate through this face's own /talk, so it speaks its own rounds."""
+        try:
+            post_json(f"http://127.0.0.1:{self.args.port}/talk",
+                      {"to": peer.get("name") or "", "text": text[:600], "rounds": rounds},
+                      timeout=(self.args.reply_timeout + 30) * rounds)
+            log(f"debate with {peer.get('name')} finished")
+        except urllib.error.HTTPError as exc:
+            try:
+                detail = exc.read().decode("utf-8", "replace")[:200]
+            except Exception:                      # noqa: BLE001
+                detail = ""
+            log(f"debate with {peer.get('name')} failed: {exc} {detail}")
+        except Exception as exc:                   # noqa: BLE001
+            log(f"debate with {peer.get('name')} failed: {exc}")
+
     def do_GET(self) -> None:                      # noqa: N802
         path = self.path.split("?")[0]
         if not self._authorised():
@@ -568,7 +596,9 @@ class Handler(BaseHTTPRequestHandler):
                                     "text": text[:600], "kind": body.get("kind") or "talk"},
                                    timeout=self.args.reply_timeout + 20)
             except Exception as exc:               # noqa: BLE001
-                return self._json({"error": f"peer unreachable: {exc}"}, 502)
+                log(f"/talk could not reach {peer_url(peer, '/peer/incoming')}: {exc}")
+                return self._json({"error": f"peer unreachable: {exc}",
+                                   "peer_url": peer_url(peer, "/peer/incoming")}, 502)
             reply = str(answer.get("reply") or "")
             relayed = relay_audio(self.args, peer, str(answer.get("audio") or "")) if self.args.relay else False
             lines = [{"who": self.args.name, "text": text[:600]},
@@ -610,6 +640,14 @@ class Handler(BaseHTTPRequestHandler):
             if not peer:
                 return self._json({"handled": False})
             log(f"routing to {peer.get('name')}: {rest[:70]!r}")
+            if wants_debate(text):
+                # Ask this face's own /talk, so the debate runs with rounds and each side speaks
+                # on its own box. Delegating a single message would leave the asking face silent
+                # for every round after the first.
+                threading.Thread(target=self._debate, args=(peer, rest, 3), daemon=True).start()
+                return self._json({"handled": True, "peer": peer.get("name"), "debate": True,
+                                   "ack": f"Arguing with {peer.get('name')}.",
+                                   "text": rest[:600]})
             http_post_json_async(peer_url(peer, "/peer/incoming"),
                                  {"from": self.args.name, "id": self.args.id,
                                   "text": rest[:600], "kind": "route"},
