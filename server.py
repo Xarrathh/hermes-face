@@ -1050,10 +1050,11 @@ def run_turn(text: str, seq: int, origin: str = "local") -> None:
             _speak_fixed(seq, ack)
             record_turn(heard, ack, sid or FACE_SESSION)
             return
-        qfile = AUDIO / f"q-{int(time.time() * 1000)}.txt"
-        fd = os.open(qfile, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(PROMPT_PREFIX + heard)
+        # `--query-file -` reads the prompt from stdin: no temporary file to race with, and his
+        # spoken words never touch the disk. A file was deleted from under the CLI on one box and
+        # the turn died with "cannot read --query-file" -- a race with no upside to keep.
+        qfile = None
+        prompt_text = PROMPT_PREFIX + heard
         # -Q used to be the only programmatic mode, but it still lets a tool's own print
         # (a patch diff) onto stdout, and the face then spoke the code at him. Where the
         # CLI has --format stream-json, the turn speaks the protocol instead and the answer
@@ -1061,7 +1062,8 @@ def run_turn(text: str, seq: int, origin: str = "local") -> None:
         if not hermes_available():
             # The agent is a prerequisite, not a dependency we can install: say which binary is
             # missing rather than failing inside Popen with a traceback in the log.
-            qfile.unlink(missing_ok=True)
+            if qfile is not None:
+                qfile.unlink(missing_ok=True)
             reply = ("I have no Hermes agent to think with. Install Hermes, or point HERMES_BIN at "
                      "its command, and I will answer.")
             record_turn(heard, reply, sid or FACE_SESSION)
@@ -1072,14 +1074,14 @@ def run_turn(text: str, seq: int, origin: str = "local") -> None:
         inline_prompt = False
         cmd = [str(HERMES), "chat"]
         caps = hermes_caps()
-        if caps["query_file"]:
-            cmd += ["--query-file", str(qfile)]
+        use_stdin = bool(caps["query_file"])
+        if use_stdin:
+            cmd += ["--query-file", "-"]
         else:
             # A CLI without --query-file can only take the prompt inline, where another local
             # account can read it out of the process list. That is not a trade to make silently, so
             # it happens only when he has explicitly asked for it; otherwise the face refuses and
             # says why. (`--query-file -` is the modern route: stdin, nothing in argv.)
-            qfile.unlink(missing_ok=True)
             if os.environ.get("HERMES_FACE_ALLOW_INLINE_PROMPT") == "1":
                 cmd += ["-q", PROMPT_PREFIX + heard]
                 inline_prompt = True
@@ -1114,12 +1116,21 @@ def run_turn(text: str, seq: int, origin: str = "local") -> None:
         for attempt in range(4):
             try:
                 proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                        text=True, stdin=subprocess.DEVNULL,
+                                        text=True,
+                                        stdin=subprocess.PIPE if use_stdin else subprocess.DEVNULL,
                                         start_new_session=True)
+                if use_stdin:
+                    # The prompt goes down the pipe now, before anything waits on stdout.
+                    try:
+                        proc.stdin.write(prompt_text)
+                        proc.stdin.close()
+                    except (BrokenPipeError, OSError):
+                        pass
             except Exception as exc:               # noqa: BLE001
                 # The prompt file holds his spoken words: do not leave it behind when the
                 # agent cannot even be spawned.
-                qfile.unlink(missing_ok=True)
+                if qfile is not None:
+                    qfile.unlink(missing_ok=True)
                 reply = f"I hit an error: {exc}"
                 break
             with RUN_LOCK:
@@ -1138,7 +1149,8 @@ def run_turn(text: str, seq: int, origin: str = "local") -> None:
                 with RUN_LOCK:
                     if RUN["proc"] is proc:
                         RUN["proc"] = None
-                qfile.unlink(missing_ok=True)
+                if qfile is not None:
+                    qfile.unlink(missing_ok=True)
 
             # interrupted: the seq moved on, so this turn's answer is not wanted
             with LOCK:

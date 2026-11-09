@@ -775,7 +775,9 @@ def main() -> int:
     ap.add_argument("--config-file", default=None,
                     help="peering.json holding this face's name and aliases (default: beside audio/)")
     ap.add_argument("--auto-reply", action="store_true", help="answer an incoming line with an agent turn")
-    ap.add_argument("--max-turns", type=int, default=6, help="answers per peer before the cap")
+    ap.add_argument("--max-turns", type=int, default=12,
+                    help="answers per peer per conversation window; a 3-round debate spends 3, "
+                         "so 6 let two debates inside one window hit the cap")
     ap.add_argument("--reply-timeout", type=float, default=60.0)
     args = ap.parse_args()
     if args.beacon_send_port is None:
