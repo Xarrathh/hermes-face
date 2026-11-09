@@ -956,6 +956,22 @@ def handle_command(text: str) -> str:
     return f"Unknown command {cmd}. Try slash help."
 
 
+def _wait_idle(seconds: float = 45.0) -> bool:
+    """Wait for the current turn to finish instead of talking over it.
+
+    A peer line used to call _kill_turn() outright, so an arriving message cut the answer
+    Pierre was listening to mid-sentence. Waiting is the polite order; killing is the last
+    resort after the deadline.
+    """
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        with LOCK:
+            if STATE["agent"] == "idle":
+                return True
+        time.sleep(0.25)
+    return False
+
+
 def _speak_fixed(seq: int, text: str) -> None:
     """Speak a line that needs no agent turn: synthesis, then the usual idle timer."""
     try:
@@ -993,7 +1009,7 @@ def peer_route(text: str) -> str:
             data=json.dumps({"text": text}).encode(),
             headers={"Content-Type": "application/json", "User-Agent": "hermes-face/peer-route"},
         )
-        with urllib.request.urlopen(req, timeout=4) as resp:
+        with urllib.request.urlopen(req, timeout=1.5) as resp:
             out = json.loads(resp.read() or b"{}")
     except Exception:                                  # noqa: BLE001
         return ""
@@ -1506,7 +1522,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": "empty"}, 400)
             if len(text) > MAX_SPOKEN:
                 return self._json({"error": f"text too long (limit {MAX_SPOKEN} characters)"}, 413)
-            _kill_turn()
+            if not _wait_idle():
+                _kill_turn()
             with LOCK:
                 STATE["seq"] += 1
                 seq = STATE["seq"]
@@ -1552,7 +1569,8 @@ class Handler(BaseHTTPRequestHandler):
                 size = src.stat().st_size
             except OSError as exc:
                 return self._json({"error": f"unreadable: {exc}"}, 500)
-            _kill_turn()
+            if not _wait_idle():
+                _kill_turn()
             with LOCK:
                 STATE["seq"] += 1
                 seq = STATE["seq"]
