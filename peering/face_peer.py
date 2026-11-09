@@ -30,7 +30,8 @@ from pathlib import Path
 
 VERSION = "1.1"
 PRESENT_TTL = 8.0          # seconds of beacon silence before a peer is "gone"
-GREET_COOLDOWN = 900.0    # one greeting per peer per 15 minutes
+GREET_COOLDOWN = 900.0
+GONE_TTL = 600.0          # a peer that has been gone this long is forgotten outright    # one greeting per peer per 15 minutes
 BEACON_EVERY = 2.0
 AUDIO_NAME = re.compile(r"[A-Za-z0-9._-]{1,64}\.mp3")
 
@@ -64,11 +65,17 @@ class Book:
 
     def sweep(self) -> list[str]:
         gone = []
+        now = time.time()
         with self.lock:
             for pid, p in self.peers.items():
-                if p.get("present") and time.time() - p.get("last", 0) > PRESENT_TTL:
+                if p.get("present") and now - p.get("last", 0) > PRESENT_TTL:
                     p["present"] = False
                     gone.append(pid)
+            # A face that left hours ago should not linger in a menu or a /peers list as a
+            # ghost row: once it has been gone long enough, forget it entirely.
+            for pid in [k for k, v in self.peers.items()
+                        if not v.get("present") and now - v.get("last", 0) > GONE_TTL]:
+                self.peers.pop(pid, None)
         return gone
 
     def resolve(self, who: str) -> tuple[str | None, dict | None]:
