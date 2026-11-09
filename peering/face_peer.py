@@ -169,6 +169,16 @@ def speak_local(args: argparse.Namespace, text: str, frm: str) -> str:
         return ""
 
 
+def echo_score(reply: str, said: str) -> float:
+    """How much of one text is made of the other, in whichever direction is fuller."""
+    a = {w for w in re.findall(r"[a-z0-9']{3,}", reply.lower())}
+    b = {w for w in re.findall(r"[a-z0-9']{3,}", said.lower())}
+    if not a or not b:
+        return 0.0
+    inter = len(a & b)
+    return max(inter / len(a), inter / len(b))
+
+
 def echoes_input(reply: str, said: str) -> bool:
     """True when the answer is really the question coming back.
 
@@ -703,6 +713,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"ok": True, "reply": "", "audio": "", "capped": True})
                 TURNS[who] = (turns + 1, now)
             reply, audio = ask_agent(self.args, frm, text)
+            # Log the number, not a verdict: tomorrow's third-voice test should yield a
+            # distribution of real scores rather than "it felt like an echo".
+            log(f"echo score vs {frm}: {echo_score(reply, text):.2f} (cut 0.75)")
             if reply and echoes_input(reply, text):
                 log(f"{frm} got an echo back ({reply[:50]!r}); asking once more")
                 reply, audio = ask_agent(self.args, frm,
