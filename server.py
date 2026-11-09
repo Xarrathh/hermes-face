@@ -639,7 +639,11 @@ def synth(text: str, out: Path, voice: str | None = None) -> None:
     # `403 Invalid response status` that succeeds on the next attempt). One retry
     # keeps a single bad token from silencing a whole reply.
     last: Exception | None = None
-    for attempt in range(3):
+    # Five attempts, not three: Edge answers NoAudioReceived in bursts of a few seconds (seen
+    # twice in a row on one box, then six clean turns), and the old 0.8/1.6/2.4 s tail gave up
+    # inside ~5 s -- long enough to lose the sentence, short enough that the face went silent for
+    # no fault of its own. The tail is only paid when the service is already failing.
+    for attempt in range(5):
         try:
             asyncio.run(run())
             if out.is_file() and out.stat().st_size > 0:
@@ -647,7 +651,7 @@ def synth(text: str, out: Path, voice: str | None = None) -> None:
                 return
         except Exception as exc:                   # noqa: BLE001
             last = exc
-        time.sleep(0.8 * (attempt + 1))
+        time.sleep(0.8 * (attempt + 1) if attempt < 3 else 2.0 * (attempt - 1))
     if last:
         raise last
     raise RuntimeError("edge-tts wrote no audio")
