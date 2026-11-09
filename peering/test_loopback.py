@@ -118,7 +118,7 @@ class MockFace:
                         mock.state.update(agent="speaking", audio=f"/audio/{name}",
                                           audio_parts=[f"/audio/{name}"])
                         time.sleep(0.4)
-                        mock.state.update(agent="idle", reply=f"{mock.name} answering",
+                        mock.state.update(agent="idle", reply=f"{mock.name} answering #{seq}",
                                           audio=None, audio_parts=[])
                     threading.Thread(target=run, daemon=True).start()
                     return self._j({"ok": True, "seq": seq})
@@ -235,6 +235,19 @@ def run(verbose: bool = False) -> int:
         check("/route handles a verb form", out.get("handled") is True and out.get("text") == "how it is",
               json.dumps(out)[:100])
 
+        # ---- a debate: each face argues on its own box, and no line repeats its input
+        status, out = http("http://127.0.0.1:9911/talk",
+                           {"to": "BETA", "rounds": 3,
+                            "text": "South Africa's growth is overstated."}, key=KEY)
+        lines = out.get("lines") or []
+        check("/talk rounds produce a real exchange", status == 200 and len(lines) == 6,
+              f"{len(lines)} lines, rounds={out.get('rounds')}")
+        check("the exchange alternates speakers",
+              [ln.get("who") for ln in lines] == ["ALPHA", "BETA"] * 3, str([ln.get("who") for ln in lines]))
+        check("no face repeats the line it was given",
+              all(lines[i]["text"] != lines[i - 1]["text"] for i in range(1, len(lines))),
+              str([ln.get("text")[:24] for ln in lines]))
+
         # ---- the peer key: loopback is trusted, the LAN is not
         status, _ = http("http://127.0.0.1:9911/peers")
         check("loopback needs no key (the local bridge is trusted)", status == 200, str(status))
@@ -249,7 +262,14 @@ def run(verbose: bool = False) -> int:
         else:
             print("SKIP LAN key checks: this box has no non-loopback IPv4")
 
-        # ---- turn cap, keyed on the peer id rather than the self-declared name
+        # ---- turn cap, keyed on the peer id rather than the self-declared name.
+        # Beta is restarted first: the debate above already spent its six answers, and a cap
+        # test that starts at the cap would pass without proving anything.
+        b.send_signal(signal.SIGTERM)
+        time.sleep(1.5)
+        b = start_sidecar(root, "beta", 9212, 9912, 9992, 9991, verbose)
+        check("restarted peer answers again", wait_up(9912) >= 0, "")
+        time.sleep(2.0)
         caps = []
         for i in range(9):
             _, r = http("http://127.0.0.1:9912/peer/incoming",
