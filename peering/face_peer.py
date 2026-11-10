@@ -15,6 +15,7 @@ answered with another greeting.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -30,6 +31,11 @@ from pathlib import Path
 
 VERSION = "1.2"
 PRESENT_TTL = 8.0          # seconds of beacon silence before a peer is "gone"
+
+try:
+    BUILD = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()[:12]
+except OSError:
+    BUILD = "unknown"
 GREET_COOLDOWN = 900.0    # one greeting per peer per 15 minutes
 BEACON_EVERY = 2.0
 AUDIO_NAME = re.compile(r"[A-Za-z0-9._-]{1,64}\.mp3")
@@ -78,7 +84,7 @@ class Book:
         with self.lock:
             p = self.peers.get(pid) or {"greeted": 0.0, "present": False}
             was = bool(p.get("present"))
-            for k in ("name", "port", "face", "ip", "aliases"):
+            for k in ("name", "port", "face", "ip", "aliases", "build"):
                 if info.get(k) is not None:
                     p[k] = info[k]
             p["last"] = time.time()
@@ -410,7 +416,7 @@ def beacon_loop(args: argparse.Namespace, stop: threading.Event) -> None:
         name, aliases = load_identity(args)
         body = json.dumps({"v": VERSION, "id": args.id, "name": name,
                            "port": args.port, "face": "hermes-face",
-                           "aliases": aliases[:8]}).encode()
+                           "aliases": aliases[:8], "build": BUILD}).encode()
         try:
             sock.sendto(body, (args.beacon_send, args.beacon_send_port))
         except OSError as exc:
@@ -448,7 +454,10 @@ def listen_loop(args: argparse.Namespace, book: Book, stop: threading.Event) -> 
         info["ip"] = addr[0]
         fresh, peer = book.seen(pid, info)
         if fresh:
-            log(f"peer present: {peer.get('name')} at {addr[0]}:{peer.get('port')}")
+            log(f"peer present: {peer.get('name')} at {addr[0]}:{peer.get('port')} build={peer.get('build') or '?'}")
+            if peer.get("build") and peer["build"] != BUILD:
+                log(f"BUILD MISMATCH: {peer.get('name')} runs {peer['build']}, this face runs {BUILD}"
+                    " -- one of them is stale, and a test between mismatched builds proves nothing")
             threading.Thread(target=greet, args=(book, args, pid, peer), daemon=True).start()
     sock.close()
 
@@ -530,7 +539,8 @@ class Handler(BaseHTTPRequestHandler):
         if not self._authorised():
             return self._json({"error": "peer key required"}, 403)
         if path == "/health":
-            return self._json({"ok": True, "who": self.args.id, "version": VERSION})
+            return self._json({"ok": True, "who": self.args.id, "version": VERSION,
+                               "build": BUILD})
         if path == "/transcript":
             # The exchange as text, newest last, so a person can watch the two faces talk.
             if not self._authorised():
