@@ -121,7 +121,28 @@ class Book:
 
 
 # ------------------------------------------------------------------ face calls
-def face_call(args: argparse.Namespace, path: str, payload: dict, timeout: float = 40.0) -> dict:
+def why_failed(exc: BaseException) -> str:
+    """Say which failure this is, because 'unreachable' and 'busy' send you to different places.
+
+    A 40 s client timeout on a handoff to a live turn is not a network fault: the bridge is
+    working and busy. Calling both of them 'unreachable' is how a queue looked like a dead box
+    for an afternoon.
+    """
+    if isinstance(exc, urllib.error.HTTPError):
+        return "busy" if exc.code in (409, 429, 503) else f"http {exc.code}"
+    if isinstance(exc, (TimeoutError, socket.timeout)):
+        return "busy"
+    if isinstance(exc, urllib.error.URLError):
+        reason = getattr(exc, "reason", None)
+        if isinstance(reason, (TimeoutError, socket.timeout)):
+            return "busy"
+        return "unreachable"
+    if isinstance(exc, (ConnectionError, OSError)):
+        return "unreachable"
+    return "error"
+
+
+def face_call(args: argparse.Namespace, path: str, payload: dict, timeout: float = 180.0) -> dict:
     req = urllib.request.Request(
         args.face_url.rstrip("/") + path,
         data=json.dumps(payload).encode(),
@@ -228,10 +249,14 @@ def ask_agent(args: argparse.Namespace, peer_name: str, text: str) -> tuple[str,
     except Exception:                              # noqa: BLE001
         pass
     try:
-        face_call(args, "/say", {"text": prompt, "origin": "peer"})
+        # 180 s, the same floor the peer calls use: /say now waits for the live turn instead of
+        # killing it, so a handoff during a real turn legitimately takes tens of seconds. At 40 s
+        # this timed out client-side and reported the bridge as unreachable.
+        face_call(args, "/say", {"text": prompt, "origin": "peer"}, timeout=max(180.0, args.reply_timeout + 60))
     except Exception as exc:                       # noqa: BLE001
-        log(f"agent turn failed to start: {exc}")
-        return "", "", "unreachable"
+        why = why_failed(exc)
+        log(f"agent turn failed to start ({why}): {exc}")
+        return "", "", why
     deadline = time.time() + args.reply_timeout
     last_name = ""
     last_state: dict = {}
