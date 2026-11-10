@@ -38,7 +38,7 @@ def main() -> int:
     setattr(fp, "face_call", lambda *a, **k: {"ok": True})
     fp.time.sleep = lambda _s: None
 
-    text, audio = fp.ask_agent(args, "Suzie", "what do you think?")
+    text, audio, why = fp.ask_agent(args, "Suzie", "what do you think?")
     ok_text = text.startswith("Growth needs private capital")
     print(f"{'PASS' if ok_text else 'FAIL'} the text survives a speech error  [{text[:60]!r}]")
     ok_audio = audio == ""
@@ -54,12 +54,15 @@ def main() -> int:
         return {"agent": "idle", "error": "cannot read --query-file", "reply": "", "audio_parts": []}
 
     setattr(fp, "face_state", empty_state)
-    text2, _ = fp.ask_agent(args, "Suzie", "anyone?")
+    text2, _audio2, why2 = fp.ask_agent(args, "Suzie", "anyone?")
     ok_empty = text2 == ""
     print(f"{'PASS' if ok_empty else 'FAIL'} an empty error stays empty        [{text2!r}]")
 
-    failures = sum(1 for ok in (ok_text, ok_audio, ok_empty) if not ok)
-    print(f"\n{3 - failures}/3 error-path checks behaved")
+    ok_reason = why == "ok-no-audio" and why2 == "error"
+    print(f"{'PASS' if ok_reason else 'FAIL'} the reason explains the answer      [{why!r}, {why2!r}]")
+
+    failures = sum(1 for ok in (ok_text, ok_audio, ok_empty, ok_reason) if not ok)
+    print(f"\n{4 - failures}/4 error-path checks behaved")
     return 1 if failures else 0
 
 
