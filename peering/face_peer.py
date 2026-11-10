@@ -276,6 +276,37 @@ def peer_url(p: dict, path: str) -> str:
 
 
 # ------------------------------------------------------------------ addressing
+def load_trusted(args: argparse.Namespace) -> list[str]:
+    """Face ids allowed to drive this one. "*" means every face that has the key.
+
+    The shared key says "same installation"; this list says "this specific face may talk to me".
+    A laptop with the key but an id nobody approved gets discovery and nothing else.
+    """
+    path = Path(args.config_file) if args.config_file else Path(args.audio_dir).parent / "peering.json"
+    try:
+        cfg = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    trusted = cfg.get("trusted")
+    if not isinstance(trusted, list):
+        return []
+    return [str(x).strip()[:64] for x in trusted if str(x).strip()]
+
+
+def save_trusted(args: argparse.Namespace, ids: list[str]) -> None:
+    path = Path(args.config_file) if args.config_file else Path(args.audio_dir).parent / "peering.json"
+    try:
+        cfg = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(cfg, dict):
+            cfg = {}
+    except (OSError, json.JSONDecodeError):
+        cfg = {}
+    cfg["trusted"] = ids
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
 def load_identity(args: argparse.Namespace) -> tuple[str, list[str]]:
     """This face's spoken name and the extra words that address it, from peering.json.
 
@@ -493,6 +524,10 @@ class Handler(BaseHTTPRequestHandler):
     args: argparse.Namespace
     book: Book
 
+    # Routes that may drive this face: every one of them is gated by the key off loopback, and
+    # by the trust list as well. /trust itself is loopback-only and deliberately not here.
+    PEER_ROUTES = ("/talk", "/ask", "/route", "/peer/incoming", "/speak")
+
     def log_message(self, fmt: str, *a) -> None:
         log("http " + fmt % a)
 
@@ -503,6 +538,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _loopback(self) -> bool:
+        try:
+            return self.client_address[0] in ("127.0.0.1", "::1")
+        except (IndexError, TypeError):
+            return False
 
     def _authorised(self) -> bool:
         """Is this request carrying the LAN peer key?
@@ -564,8 +605,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": "peer key required"}, 403)
             name, aliases = load_identity(self.args)      # a panel rename must show here
             self.args.name, self.args.aliases = name, aliases
+            trusted = load_trusted(self.args)
+            peers = []
+            for p in self.book.snapshot():
+                p["trusted"] = ("*" in trusted) or p.get("id") in trusted
+                peers.append(p)
             return self._json({"me": {"id": self.args.id, "name": name},
-                               "peers": self.book.snapshot()})
+                               "trusted": trusted, "peers": peers})
         if path.startswith("/audio/"):
             name = urllib.parse.unquote(path[len("/audio/"):])
             if not AUDIO_NAME.fullmatch(name):
@@ -587,6 +633,37 @@ class Handler(BaseHTTPRequestHandler):
         if not self._authorised():
             return self._json({"error": "peer key required"}, 403)
         body = self._body()
+        # Holding the key is not the same as being welcome. Anything arriving off loopback must
+        # come from an id this face has been told to accept -- one rogue laptop with the cluster
+        # key should not be able to drive a tool-enabled agent.
+        if not self._loopback() and path in self.PEER_ROUTES:
+            who = str(body.get("id") or "").strip()[:64]
+            trusted = load_trusted(self.args)
+            if "*" not in trusted and who not in trusted:
+                log(f"refused {who or 'an unidentified caller'} at {self.client_address[0]}: "
+                    f"not in the trust list (allow it with face-trust.sh)")
+                return self._json({"error": "face not trusted",
+                                   "hint": "run face-trust.sh allow <name> on this box",
+                                   "id": who}, 403)
+
+        if path == "/trust":
+            if not self._loopback():
+                return self._json({"error": "trust can only be changed on this machine"}, 403)
+            target = str(body.get("id") or body.get("name") or "").strip()[:64]
+            if not target:
+                return self._json({"error": "id or name required"}, 400)
+            if target != "*":
+                pid, peer = self.book.resolve(target)
+                target = (pid or target)
+            ids = [x for x in load_trusted(self.args) if x != "*"]
+            if body.get("allow", True):
+                if target not in ids:
+                    ids.append(target)
+            else:
+                ids = [x for x in ids if x != target]
+            save_trusted(self.args, ids)
+            log(f"trust list now: {ids or 'empty'}")
+            return self._json({"ok": True, "trusted": ids})
 
         if path == "/speak":
             text = str(body.get("text") or "").strip()

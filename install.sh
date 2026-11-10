@@ -383,6 +383,8 @@ Peer layer (optional — two faces on one LAN):
   start     systemctl --user enable --now face-peer.service
   name it   gear -> Name in the face panel, or $PREFIX/../face-name.sh "Name" "alias1,alias2"
   check     curl -s http://127.0.0.1:9910/peers
+  pair      face-trust.sh list            who has been seen, and who may drive this face
+            face-trust.sh allow <name>    allow one face; a new install answers nobody
 
 Next: the face runs \`hermes chat\` per turn, so it is the same agent with its own
 session — make sure Hermes has a model configured, then press F9 (or type in the

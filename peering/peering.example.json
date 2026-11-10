@@ -6,5 +6,8 @@
     "propierre",
     "pro pierre"
   ],
-  "note": "The name is how other faces address this one. Aliases are matched case-insensitively; a leading alias followed by a comma always routes ('Suzie, ...'), and 'ask/tell/vra <name>' routes too."
+  "note": "trusted lists the face ids allowed to drive this one; '*' allows any face that holds the cluster key. A new install starts empty and pairs with face-trust.sh allow <name>.",
+  "trusted": [
+    "face-suzie"
+  ]
 }

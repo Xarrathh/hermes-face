@@ -96,6 +96,7 @@ NUGGET="$PREFIX/peer-firewall.nft"
 echo "peer id:      $ID"
 echo "peer port:    tcp/$PEER_PORT   (beacon: udp/9910)"
 echo "shared key:   $PREFIX/peer.key"
+echo "pairing:      bin/face-trust.sh allow <name>   # a new face is discovered but not trusted"
 echo "lan subnet:   ${SUBNET:-unknown}"
 echo
 if [ -n "${SUBNET:-}" ]; then
