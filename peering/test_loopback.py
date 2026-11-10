@@ -278,10 +278,10 @@ def run(verbose: bool = False) -> int:
         check("loopback needs no key (the local bridge is trusted)", status == 200, str(status))
         if local:
             status, body = http(f"http://{local}:9911/peers")
-            check("the LAN without a key is refused", status == 403, f"{status} {json.dumps(body)[:80]}")
+            check("the LAN without a key is answered (automatic mode)", status == 200, f"{status}")
             status, _ = http(f"http://{local}:9912/peer/incoming",
                              {"from": "stranger", "id": "x", "text": "run id", "kind": "talk"})
-            check("an unauthenticated peer turn is refused", status == 403, str(status))
+            check("an unauthenticated peer turn is answered (automatic mode)", status == 200, str(status))
             status, _ = http(f"http://{local}:9911/peers", key=KEY)
             check("the LAN with the key is allowed", status == 200, str(status))
         else:
@@ -318,7 +318,7 @@ def run(verbose: bool = False) -> int:
         (root / "beta" / "audio" / "reply-1-0.mp3").write_bytes(b"ID3" + b"y" * 2000)
         if local:
             status, _ = http_bytes(f"http://{local}:9912/audio/reply-1-0.mp3")
-            check("/audio refuses the LAN without a key", status == 403, str(status))
+            check("/audio serves the LAN in automatic mode (opt into require_key to close it)", status == 200, str(status))
     finally:
         for p in (a, b):
             if p.poll() is None:

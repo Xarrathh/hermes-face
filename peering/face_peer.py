@@ -276,6 +276,52 @@ def peer_url(p: dict, path: str) -> str:
 
 
 # ------------------------------------------------------------------ addressing
+def load_policy(args: argparse.Namespace) -> dict:
+    """How this face treats other faces on the LAN.
+
+    Default is automatic: a face that appears is greeted, recorded and answered, because that is
+    the whole point of two faces meeting. The list exists to improve security when someone wants
+    it -- `blocked` refuses a face outright, `strict` refuses anything not in `trusted`, and
+    `require_key` brings back the shared-secret gate. `seen` is written automatically so the list
+    shows who has been here without anyone configuring anything.
+    """
+    path = Path(args.config_file) if args.config_file else Path(args.audio_dir).parent / "peering.json"
+    try:
+        cfg = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"blocked": [], "trusted": [], "strict": False, "require_key": False, "seen": []}
+    def ids(key):
+        v = cfg.get(key)
+        return [str(x).strip()[:64] for x in v if str(x).strip()] if isinstance(v, list) else []
+    return {"blocked": ids("blocked"), "trusted": ids("trusted"),
+            "strict": bool(cfg.get("strict")), "require_key": bool(cfg.get("require_key")),
+            "seen": ids("seen")}
+
+
+def record_seen(args: argparse.Namespace, peer_id: str, name: str) -> None:
+    """Remember a face at first contact. Costs nothing, and makes the list worth reading."""
+    path = Path(args.config_file) if args.config_file else Path(args.audio_dir).parent / "peering.json"
+    try:
+        cfg = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(cfg, dict):
+            cfg = {}
+    except (OSError, json.JSONDecodeError):
+        cfg = {}
+    seen = cfg.get("seen")
+    if not isinstance(seen, list):
+        seen = []
+    stamp = f"{peer_id}|{name}|{time.strftime('%Y-%m-%d %H:%M')}"
+    if not any(str(s).split("|")[0] == peer_id for s in seen):
+        seen.append(stamp)
+        cfg["seen"] = seen[-40:]
+        try:
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            os.replace(tmp, path)
+        except OSError as exc:
+            log(f"could not record {peer_id}: {exc}")
+
+
 def load_trusted(args: argparse.Namespace) -> list[str]:
     """Face ids allowed to drive this one. "*" means every face that has the key.
 
@@ -291,6 +337,20 @@ def load_trusted(args: argparse.Namespace) -> list[str]:
     if not isinstance(trusted, list):
         return []
     return [str(x).strip()[:64] for x in trusted if str(x).strip()]
+
+
+def _save_policy(args: argparse.Namespace, changes: dict) -> None:
+    path = Path(args.config_file) if args.config_file else Path(args.audio_dir).parent / "peering.json"
+    try:
+        cfg = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(cfg, dict):
+            cfg = {}
+    except (OSError, json.JSONDecodeError):
+        cfg = {}
+    cfg.update(changes)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def save_trusted(args: argparse.Namespace, ids: list[str]) -> None:
@@ -546,22 +606,24 @@ class Handler(BaseHTTPRequestHandler):
             return False
 
     def _authorised(self) -> bool:
-        """Is this request carrying the LAN peer key?
+        """May this caller reach the peer API at all?
 
-        The listener is on the network, not on loopback: without this, anyone on the LAN could make
-        the face speak, or spend its agent turns through /ask. A request from this machine's own
-        user is trusted the same way the bridge trusts it — by the socket, not by a secret.
+        Default is automatic: a face on the same network is answered, because two faces meeting
+        without being configured is the feature. The shared key is still honoured when a box sets
+        `"require_key": true` in peering.json -- and then it is mandatory -- but it is no longer
+        the price of admission for everyone else. The greeting is the announcement, and
+        `face-trust.sh block <name>` is the refusal.
         """
         import hmac as _hmac
-        if not PEER_KEY:
-            return False
-        given = self.headers.get("X-Peer-Key", "")
-        if given and _hmac.compare_digest(given, PEER_KEY):
+        if self._loopback():
             return True
-        try:
-            return self.client_address[0] in ("127.0.0.1", "::1")
-        except (IndexError, TypeError):
-            return False
+        policy = load_policy(self.args)
+        if not policy["require_key"]:
+            return True
+        if not PEER_KEY:
+            return False                      # require_key with no key file: refuse, and say why
+        given = self.headers.get("X-Peer-Key", "")
+        return bool(given) and _hmac.compare_digest(given, PEER_KEY)
 
     def _body(self) -> dict:
         try:
@@ -605,13 +667,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": "peer key required"}, 403)
             name, aliases = load_identity(self.args)      # a panel rename must show here
             self.args.name, self.args.aliases = name, aliases
-            trusted = load_trusted(self.args)
+            policy = load_policy(self.args)
+            mode = ("key required" if policy["require_key"] else
+                    "strict" if policy["strict"] else "automatic")
             peers = []
             for p in self.book.snapshot():
-                p["trusted"] = ("*" in trusted) or p.get("id") in trusted
+                p["trusted"] = (not policy["strict"]) or ("*" in policy["trusted"]) \
+                    or p.get("id") in policy["trusted"]
+                p["blocked"] = p.get("id") in policy["blocked"]
                 peers.append(p)
-            return self._json({"me": {"id": self.args.id, "name": name},
-                               "trusted": trusted, "peers": peers})
+            return self._json({"me": {"id": self.args.id, "name": name}, "mode": mode,
+                               "trusted": policy["trusted"], "blocked": policy["blocked"],
+                               "seen": policy["seen"], "peers": peers})
         if path.startswith("/audio/"):
             name = urllib.parse.unquote(path[len("/audio/"):])
             if not AUDIO_NAME.fullmatch(name):
@@ -638,13 +705,17 @@ class Handler(BaseHTTPRequestHandler):
         # key should not be able to drive a tool-enabled agent.
         if not self._loopback() and path in self.PEER_ROUTES:
             who = str(body.get("id") or "").strip()[:64]
-            trusted = load_trusted(self.args)
-            if "*" not in trusted and who not in trusted:
-                log(f"refused {who or 'an unidentified caller'} at {self.client_address[0]}: "
-                    f"not in the trust list (allow it with face-trust.sh)")
-                return self._json({"error": "face not trusted",
-                                   "hint": "run face-trust.sh allow <name> on this box",
-                                   "id": who}, 403)
+            who_name = str(body.get("from") or "")[:60]
+            policy = load_policy(self.args)
+            if who and who in policy["blocked"]:
+                log(f"refused {who} at {self.client_address[0]}: blocked")
+                return self._json({"error": "face blocked", "id": who}, 403)
+            if policy["strict"] and "*" not in policy["trusted"] and who not in policy["trusted"]:
+                log(f"refused {who or 'an unidentified caller'}: strict mode, not in the list")
+                return self._json({"error": "face not trusted (strict)",
+                                   "hint": "face-trust.sh allow <name>", "id": who}, 403)
+            if who:
+                record_seen(self.args, who, who_name)
 
         if path == "/trust":
             if not self._loopback():
@@ -655,10 +726,23 @@ class Handler(BaseHTTPRequestHandler):
             if target != "*":
                 pid, peer = self.book.resolve(target)
                 target = (pid or target)
+            if body.get("block"):
+                policy = load_policy(self.args)
+                blocked = [x for x in policy["blocked"] if x != target]
+                if target not in blocked:
+                    blocked.append(target)
+                ids = [x for x in policy["trusted"] if x != target]
+                _save_policy(self.args, {"blocked": blocked, "trusted": ids})
+                log(f"blocked now: {blocked}")
+                return self._json({"ok": True, "blocked": blocked, "trusted": ids})
             ids = [x for x in load_trusted(self.args) if x != "*"]
+            policy = load_policy(self.args)
             if body.get("allow", True):
                 if target not in ids:
                     ids.append(target)
+                # allowing must also lift a block, or the list contradicts itself
+                blocked = [x for x in policy["blocked"] if x != target]
+                _save_policy(self.args, {"blocked": blocked})
             else:
                 ids = [x for x in ids if x != target]
             save_trusted(self.args, ids)

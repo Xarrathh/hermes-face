@@ -6,8 +6,9 @@
     "propierre",
     "pro pierre"
   ],
-  "note": "trusted lists the face ids allowed to drive this one; '*' allows any face that holds the cluster key. A new install starts empty and pairs with face-trust.sh allow <name>.",
-  "trusted": [
-    "face-suzie"
-  ]
+  "note": "Automatic: any face on this LAN is greeted, recorded in 'seen' and answered. Add ids to 'blocked' to refuse one; 'strict': true answers only 'trusted'; 'require_key': true demands the shared key as well. face-trust.sh list|block|allow edits this file.",
+  "blocked": [],
+  "strict": false,
+  "require_key": false,
+  "seen": []
 }

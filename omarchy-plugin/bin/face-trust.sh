@@ -47,7 +47,12 @@ target = " ".join(argv[1:]).strip()
 if cmd == "list":
     trusted = state.get("trusted") or []
     peers = state.get("peers") or []
-    print(f"trusted: {', '.join(trusted) if trusted else '(nobody — this face answers only loopback)'}")
+    print(f"mode: {state.get('mode', '?')}")
+    print(f"blocked: {', '.join(state.get('blocked') or []) or '(none)'}")
+    print(f"trusted: {', '.join(trusted) if trusted else '(everyone on this network)'}")
+    seen = state.get("seen") or []
+    if seen:
+        print(f"seen: {', '.join(str(s).split('|')[1] for s in seen[-6:])}")
     if not peers:
         print("no faces seen")
     for p in peers:
@@ -56,15 +61,18 @@ if cmd == "list":
               f"present={str(bool(p.get('present'))):<5} trusted={mark}")
     sys.exit(0)
 
-if cmd not in ("allow", "revoke"):
-    print(f"unknown command {cmd!r}; use list | allow <name> | revoke <name>", file=sys.stderr)
+if cmd not in ("allow", "revoke", "block", "unblock"):
+    print(f"unknown command {cmd!r}; use list | allow <name> | revoke <name> | block <name>", file=sys.stderr)
     sys.exit(2)
 if not target:
     print(f"{cmd} needs a face name or id", file=sys.stderr)
     sys.exit(2)
 
+payload = {"name": target, "allow": cmd in ("allow", "unblock")}
+if cmd in ("block", "unblock"):
+    payload["block"] = cmd == "block"
 try:
-    out = call("/trust", {"name": target, "allow": cmd == "allow"})
+    out = call("/trust", payload)
 except Exception as exc:
     print(f"could not change the trust list: {exc}", file=sys.stderr)
     sys.exit(1)
