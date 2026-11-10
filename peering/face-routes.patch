@@ -83,11 +83,45 @@
      if last:
          raise last
      raise RuntimeError("edge-tts wrote no audio")
-@@ -930,7 +965,69 @@
+@@ -689,7 +724,11 @@
+     for f in AUDIO.glob("*.mp3"):
+         m = re.match(r"reply-(\d+)", f.name)
+         try:
+-            if m and (keep_seq is None or int(m.group(1)) < keep_seq):
++            # Keep the live turn and the two before it, and never delete anything younger than
++            # two minutes. Deleting the previous reply the instant a new turn starts is how a
++            # face shows but says nothing: the page had the path and the file was already gone.
++            fresh = time.time() - f.stat().st_mtime < 120
++            if m and not fresh and (keep_seq is None or int(m.group(1)) < keep_seq - 2):
+                 f.unlink(missing_ok=True)
+             elif not m and time.time() - f.stat().st_mtime > 86400:
+                 f.unlink(missing_ok=True)      # voice-test and boot leftovers
+@@ -930,7 +969,90 @@
      return f"Unknown command {cmd}. Try slash help."
  
  
 -def run_turn(text: str, seq: int) -> None:
++def _claim_turn(timeout: float = 180.0) -> int | None:
++    """Reserve the face for one turn, or give up and say so.
++
++    The old sequence -- wait for idle, then set thinking -- was two steps with a gap, so three
++    callers arriving together all saw `idle`, all incremented `seq`, and two of the three turns
++    were killed by the third's sequence number. The face answered once and dropped two questions
++    with a 200. Check and claim happen under the same lock here, which makes "who speaks next"
++    a fact rather than a race.
++    """
++    deadline = time.time() + timeout
++    while time.time() < deadline:
++        with LOCK:
++            if str(STATE.get("agent") or "idle") == "idle":
++                STATE["seq"] += 1
++                seq = STATE["seq"]
++                STATE.update(agent="thinking", reply="", error="", audio=None, audio_parts=[])
++                return seq
++        time.sleep(0.2)
++    return None
++
++
 +def _wait_idle(seconds: float = 45.0) -> bool:
 +    """Wait for the current turn to finish instead of talking over it.
 +
@@ -154,7 +188,7 @@
      heard = text.strip()
      if not heard:
          set_if_current(seq, agent="idle")
-@@ -946,10 +1043,22 @@
+@@ -946,10 +1068,22 @@
          with LOCK:
              new_sid = STATE["session"]
      else:
@@ -181,7 +215,7 @@
          # -Q used to be the only programmatic mode, but it still lets a tool's own print
          # (a patch diff) onto stdout, and the face then spoke the code at him. Where the
          # CLI has --format stream-json, the turn speaks the protocol instead and the answer
-@@ -957,7 +1066,8 @@
+@@ -957,7 +1091,8 @@
          if not hermes_available():
              # The agent is a prerequisite, not a dependency we can install: say which binary is
              # missing rather than failing inside Popen with a traceback in the log.
@@ -191,7 +225,7 @@
              reply = ("I have no Hermes agent to think with. Install Hermes, or point HERMES_BIN at "
                       "its command, and I will answer.")
              record_turn(heard, reply, sid or FACE_SESSION)
-@@ -968,14 +1078,14 @@
+@@ -968,14 +1103,14 @@
          inline_prompt = False
          cmd = [str(HERMES), "chat"]
          caps = hermes_caps()
@@ -209,7 +243,7 @@
              if os.environ.get("HERMES_FACE_ALLOW_INLINE_PROMPT") == "1":
                  cmd += ["-q", PROMPT_PREFIX + heard]
                  inline_prompt = True
-@@ -1010,12 +1120,21 @@
+@@ -1010,12 +1145,21 @@
          for attempt in range(4):
              try:
                  proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -233,7 +267,7 @@
                  reply = f"I hit an error: {exc}"
                  break
              with RUN_LOCK:
-@@ -1034,7 +1153,8 @@
+@@ -1034,7 +1178,8 @@
                  with RUN_LOCK:
                      if RUN["proc"] is proc:
                          RUN["proc"] = None
@@ -243,7 +277,20 @@
  
              # interrupted: the seq moved on, so this turn's answer is not wanted
              with LOCK:
-@@ -1319,6 +1439,16 @@
+@@ -1125,9 +1270,9 @@
+     out = AUDIO / f"reply-{seq}.mp3"
+     try:
+         synth(speech, out)
+-        for old in AUDIO.glob("reply-*.mp3"):
+-            if old != out:
+-                old.unlink(missing_ok=True)
++        # The file used to be deleted the instant the next reply was ready -- sometimes while the
++        # page was still fetching or playing it, which is a face that shows and says nothing. Age
++        # them out instead: prune_audio keeps anything younger than two minutes.
+         if not set_if_current(seq, audio=f"/audio/{out.name}", audio_parts=[f"/audio/{out.name}"]):
+             return
+         _auto_idle_after(out.stat().st_size / 6000.0 + 4.0, seq)
+@@ -1319,6 +1464,16 @@
              # answer "which binary" or "every path we probed for one": the agent's location is
              # a map of the box, and the authed /state already carries it.
              return self._json({"ok": True, "agent": hermes_available()})
@@ -260,7 +307,7 @@
          if path.startswith("/audio/"):
              name = os.path.basename(path)
              f = AUDIO / name
-@@ -1390,18 +1520,122 @@
+@@ -1390,18 +1545,120 @@
                  return self._json({"error": "empty"}, 400)
              if len(text) > MAX_SPOKEN:
                  return self._json({"error": f"text too long (limit {MAX_SPOKEN} characters)"}, 413)
@@ -270,22 +317,19 @@
 +            # A second conversation used to kill the first: the arriving turn took the bridge and
 +            # the older one died mid-sentence, which the peer read as an empty answer. Wait for the
 +            # live turn instead, and refuse honestly when it outlasts the ceiling.
-+            if not _wait_idle(180.0):
++            seq = _claim_turn(180.0)
++            if seq is None:
 +                with LOCK:
 +                    busy = STATE.get("agent")
 +                return self._json({"error": "busy", "agent": busy,
 +                                   "hint": "a turn is still running; retry when it is idle"}, 409)
-             with LOCK:
-                 STATE["seq"] += 1
-                 seq = STATE["seq"]
-                 STATE.update(agent="thinking", mood="curious", heard=text.strip(),
-                              reply="", error="", audio=None, audio_parts=[])
-             prune_audio(seq)
--            threading.Thread(target=run_turn, args=(text, seq), daemon=True).start()
++            with LOCK:
++                STATE.update(mood="curious", heard=text.strip())
++            prune_audio(seq)
 +            origin = str(payload.get("origin") or "local")
 +            threading.Thread(target=run_turn, args=(text, seq, origin), daemon=True).start()
-             return self._json({"ok": True, "seq": seq})
- 
++            return self._json({"ok": True, "seq": seq})
++
 +        if path == "/speak":
 +            # Verbatim speech for the peer layer: the text is spoken as written, with no
 +            # agent turn behind it, so a face can deliver a line that is not its own answer.
@@ -298,13 +342,16 @@
 +                return self._json({"error": f"text too long (limit {MAX_SPOKEN} characters)"}, 413)
 +            if not _wait_idle():
 +                _kill_turn()
-+            with LOCK:
-+                STATE["seq"] += 1
-+                seq = STATE["seq"]
+             with LOCK:
+                 STATE["seq"] += 1
+                 seq = STATE["seq"]
+-                STATE.update(agent="thinking", mood="curious", heard=text.strip(),
+-                             reply="", error="", audio=None, audio_parts=[])
 +                STATE.update(agent="thinking", mood=guess_mood(text),
 +                             heard=str(payload.get("from") or "peer")[:60],
 +                             reply=text, error="", audio=None, audio_parts=[])
-+            prune_audio(seq)
+             prune_audio(seq)
+-            threading.Thread(target=run_turn, args=(text, seq), daemon=True).start()
 +            out = AUDIO / f"peer-{seq}.mp3"
 +
 +            def speak_peer_line() -> None:
@@ -327,8 +374,8 @@
 +                _auto_idle_after(out.stat().st_size / 6000.0 + 4.0, seq)
 +
 +            threading.Thread(target=speak_peer_line, daemon=True).start()
-+            return self._json({"ok": True, "seq": seq})
-+
+             return self._json({"ok": True, "seq": seq})
+ 
 +        if path == "/play":
 +            # Play audio this bridge already holds, without synthesising anything: the peer
 +            # layer relays another face's own voice here, and re-synthesising its words in
@@ -387,7 +434,7 @@
          if path == "/history/clear":
              with HIST_LOCK:
                  save_history({"sessions": []})
-@@ -1548,4 +1782,4 @@
+@@ -1548,4 +1805,4 @@
  
  
  if __name__ == "__main__":
