@@ -234,6 +234,14 @@ def ask_agent(args: argparse.Namespace, peer_name: str, text: str) -> tuple[str,
     audio, and the words are already in `reply`. Refusing the text because the voice hiccuped is
     how a debate round died with a 200 and an empty string -- the most useless possible answer.
     """
+    # A face echoes the wrapper it was given, so forwarding that echo nests it once per round:
+    # "(another Hermes face on this LAN) said: (another ... said: ...". The history panel showed
+    # four levels of it, and every level makes the prompt longer and the turn slower.
+    while True:
+        stripped = re.sub(r"^\s*\(?another Hermes face on this LAN\)?\s*said:\s*", "", text, flags=re.I)
+        if stripped == text:
+            break
+        text = stripped
     prompt = (f"{peer_name} (another Hermes face on this LAN) said: {text}\n"
               "Answer them in one short spoken sentence, in your own words. Do not repeat or "
               "paraphrase what they said; state your own position and one reason for it, and "
