@@ -261,6 +261,13 @@
       <button id="presetSave" title="Save the current look as a preset">Save current</button>
     </div>
     <div id="paramGroups"></div>
+    <h2>Name</h2>
+    <div class="sub" style="margin:-6px 0 8px">How other faces address this one. Matched case-insensitively; "Suzie, ..." or "ask Suzie ..." routes a sentence here.</div>
+    <input id="faceName" placeholder="this face's name" maxlength="24" spellcheck="false">
+    <div class="savepreset" style="margin-top:6px">
+      <input id="faceAliases" placeholder="aliases, comma separated" maxlength="120" spellcheck="false">
+      <button id="faceNameSave" title="Save the name other faces use">Save name</button>
+    </div>
     <h2>Voice</h2>
     <select id="voice"></select>
     <div class="actions">
