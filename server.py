@@ -1520,9 +1520,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": "empty"}, 400)
             if len(text) > MAX_SPOKEN:
                 return self._json({"error": f"text too long (limit {MAX_SPOKEN} characters)"}, 413)
-            # The new command always wins: drop whatever is running instead of
-            # refusing the turn. The killed run notices its seq moved and stays quiet.
-            _kill_turn()
+            # A second conversation used to kill the first: the arriving turn took the bridge and
+            # the older one died mid-sentence, which the peer read as an empty answer. Wait for the
+            # live turn instead, and refuse honestly when it outlasts the ceiling.
+            if not _wait_idle(180.0):
+                with LOCK:
+                    busy = STATE.get("agent")
+                return self._json({"error": "busy", "agent": busy,
+                                   "hint": "a turn is still running; retry when it is idle"}, 409)
             with LOCK:
                 STATE["seq"] += 1
                 seq = STATE["seq"]

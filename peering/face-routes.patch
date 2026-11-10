@@ -260,15 +260,32 @@
          if path.startswith("/audio/"):
              name = os.path.basename(path)
              f = AUDIO / name
-@@ -1399,9 +1529,108 @@
+@@ -1390,18 +1520,122 @@
+                 return self._json({"error": "empty"}, 400)
+             if len(text) > MAX_SPOKEN:
+                 return self._json({"error": f"text too long (limit {MAX_SPOKEN} characters)"}, 413)
+-            # The new command always wins: drop whatever is running instead of
+-            # refusing the turn. The killed run notices its seq moved and stays quiet.
+-            _kill_turn()
++            # A second conversation used to kill the first: the arriving turn took the bridge and
++            # the older one died mid-sentence, which the peer read as an empty answer. Wait for the
++            # live turn instead, and refuse honestly when it outlasts the ceiling.
++            if not _wait_idle(180.0):
++                with LOCK:
++                    busy = STATE.get("agent")
++                return self._json({"error": "busy", "agent": busy,
++                                   "hint": "a turn is still running; retry when it is idle"}, 409)
+             with LOCK:
+                 STATE["seq"] += 1
+                 seq = STATE["seq"]
                  STATE.update(agent="thinking", mood="curious", heard=text.strip(),
                               reply="", error="", audio=None, audio_parts=[])
              prune_audio(seq)
 -            threading.Thread(target=run_turn, args=(text, seq), daemon=True).start()
 +            origin = str(payload.get("origin") or "local")
 +            threading.Thread(target=run_turn, args=(text, seq, origin), daemon=True).start()
-+            return self._json({"ok": True, "seq": seq})
-+
+             return self._json({"ok": True, "seq": seq})
+ 
 +        if path == "/speak":
 +            # Verbatim speech for the peer layer: the text is spoken as written, with no
 +            # agent turn behind it, so a face can deliver a line that is not its own answer.
@@ -310,8 +327,8 @@
 +                _auto_idle_after(out.stat().st_size / 6000.0 + 4.0, seq)
 +
 +            threading.Thread(target=speak_peer_line, daemon=True).start()
-             return self._json({"ok": True, "seq": seq})
- 
++            return self._json({"ok": True, "seq": seq})
++
 +        if path == "/play":
 +            # Play audio this bridge already holds, without synthesising anything: the peer
 +            # layer relays another face's own voice here, and re-synthesising its words in
@@ -370,7 +387,7 @@
          if path == "/history/clear":
              with HIST_LOCK:
                  save_history({"sessions": []})
-@@ -1548,4 +1777,4 @@
+@@ -1548,4 +1782,4 @@
  
  
  if __name__ == "__main__":

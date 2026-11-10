@@ -206,7 +206,7 @@ def echoes_input(reply: str, said: str) -> bool:
     return max(inter / len(a), inter / len(b)) >= 0.75
 
 
-def ask_agent(args: argparse.Namespace, peer_name: str, text: str) -> tuple[str, str]:
+def ask_agent(args: argparse.Namespace, peer_name: str, text: str) -> tuple[str, str, str]:
     """Run a turn on this face and return (text, audio_name).
 
     A speech failure is NOT an answer failure: the bridge sets `error` when edge-tts drops the
@@ -231,7 +231,7 @@ def ask_agent(args: argparse.Namespace, peer_name: str, text: str) -> tuple[str,
         face_call(args, "/say", {"text": prompt, "origin": "peer"})
     except Exception as exc:                       # noqa: BLE001
         log(f"agent turn failed to start: {exc}")
-        return "", ""
+        return "", "", "unreachable"
     deadline = time.time() + args.reply_timeout
     last_name = ""
     last_state: dict = {}
@@ -254,14 +254,14 @@ def ask_agent(args: argparse.Namespace, peer_name: str, text: str) -> tuple[str,
             log(f"turn error on this side: {st['error'][:140]} | reply_text={said[:60]!r}")
             if said and not said.startswith("The agent did not return"):
                 # Keep the words, drop the audio: the other face can still argue.
-                return said, ""
-            return "", ""
+                return said, "", "ok-no-audio"
+            return "", "", "error"
         last_state = st
         if st.get("agent") == "idle" and (st.get("reply") or "").strip():
-            return str(st["reply"]).strip(), last_name
+            return str(st["reply"]).strip(), last_name, "ok"
     log(f"no answer from this face in {args.reply_timeout:.0f}s: agent={last_state.get('agent')!r} "
         f"error={str(last_state.get('error'))[:80]!r} reply_len={len(str(last_state.get('reply') or ''))}")
-    return "", ""
+    return "", "", "timeout"
 
 
 # ------------------------------------------------------------------ transport
@@ -785,7 +785,7 @@ class Handler(BaseHTTPRequestHandler):
                 answer = post_json(peer_url(peer, "/peer/incoming"),
                                    {"from": self.args.name, "id": self.args.id,
                                     "text": text[:600], "kind": body.get("kind") or "talk"},
-                                   timeout=self.args.reply_timeout + 20)
+                                   timeout=max(180.0, self.args.reply_timeout + 60))
             except Exception as exc:               # noqa: BLE001
                 return self._json({"error": f"peer unreachable: {exc}"}, 502)
             reply = str(answer.get("reply") or "")
@@ -796,25 +796,35 @@ class Handler(BaseHTTPRequestHandler):
             # its own box, and nothing is replayed here. Capped, because every round is two real
             # agent turns and a person is listening.
             rounds = max(1, min(int(body.get("rounds") or 1), 4))
+            stopped = "" if len(lines) > 1 else "peer empty"
             for _ in range(rounds - 1):
                 if not reply:
+                    stopped = "peer empty"
                     break
-                mine, _audio = ask_agent(self.args, peer.get("name") or "peer", reply)
+                mine, _audio, why = ask_agent(self.args, peer.get("name") or "peer", reply)
                 if not mine:
+                    stopped = f"this face: {why}"
                     break
                 lines.append({"who": self.args.name, "text": mine})
                 try:
                     answer = post_json(peer_url(peer, "/peer/incoming"),
                                        {"from": self.args.name, "id": self.args.id,
                                         "text": mine[:600], "kind": "talk"},
-                                       timeout=self.args.reply_timeout + 20)
+                                       timeout=max(180.0, self.args.reply_timeout + 60))
                 except Exception as exc:               # noqa: BLE001
                     log(f"debate round failed at {peer.get('name')}: {exc}")
+                    stopped = f"peer unreachable: {exc}"
                     break
                 reply = str(answer.get("reply") or "")
+                if not reply:
+                    stopped = f"peer empty ({answer.get('reason') or 'no reason given'})"
+                    break
                 lines.append({"who": peer.get("name") or "peer", "text": reply})
-            return self._json({"ok": True, "peer": peer.get("name"), "reply": reply,
-                               "relayed_audio": relayed, "rounds": rounds, "lines": lines})
+            # A partial debate must never look like a completed one.
+            return self._json({"ok": not stopped,
+                               "peer": peer.get("name"), "reply": reply,
+                               "relayed_audio": relayed, "rounds": rounds, "lines": lines,
+                               "asked": rounds * 2 - 1, "stopped": stopped})
 
         if path == "/route":
             # Addressed by name: this face says the question aloud in its own voice, then the
@@ -843,7 +853,7 @@ class Handler(BaseHTTPRequestHandler):
             http_post_json_async(peer_url(peer, "/peer/incoming"),
                                  {"from": self.args.name, "id": self.args.id,
                                   "text": rest[:600], "kind": "route"},
-                                 timeout=self.args.reply_timeout + 20)
+                                 timeout=max(180.0, self.args.reply_timeout + 60))
             return self._json({"handled": True, "peer": peer.get("name"),
                                "ack": f"Asking {peer.get('name')}.",
                                "text": rest[:600]})
@@ -863,7 +873,7 @@ class Handler(BaseHTTPRequestHandler):
                 answer = post_json(peer_url(peer, "/peer/incoming"),
                                    {"from": self.args.name, "id": self.args.id,
                                     "text": text[:600], "kind": "talk"},
-                                   timeout=self.args.reply_timeout + 20)
+                                   timeout=max(180.0, self.args.reply_timeout + 60))
             except Exception as exc:               # noqa: BLE001
                 return self._json({"error": f"peer unreachable: {exc}"}, 502)
             reply = str(answer.get("reply") or "")
@@ -894,24 +904,47 @@ class Handler(BaseHTTPRequestHandler):
                     log(f"turn cap reached for {frm}; not answering")
                     return self._json({"ok": True, "reply": "", "audio": "", "capped": True})
                 TURNS[who] = (turns + 1, now)
-            reply, audio = ask_agent(self.args, frm, text)
+            # One turn at a time per peer, and a second caller waits rather than losing its line.
+            # A global lock would have made one face's turn block every other face; a silent
+            # refusal would look like the peer ignoring the question.
+            lock = peer_lock(who or frm)
+            if not lock.acquire(timeout=150):
+                log(f"busy 150s: {frm} still asking; refusing rather than queueing forever")
+                return self._json({"ok": False, "reply": "", "audio": "", "reason": "busy"}, 409)
+            try:
+                reply, audio, why = ask_agent(self.args, frm, text)
+            finally:
+                lock.release()
             # Log the number, not a verdict: tomorrow's third-voice test should yield a
             # distribution of real scores rather than "it felt like an echo".
             log(f"echo score vs {frm}: {echo_score(reply, text):.2f} (cut 0.75)")
             if reply and echoes_input(reply, text):
                 log(f"{frm} got an echo back ({reply[:50]!r}); asking once more")
-                reply, audio = ask_agent(self.args, frm,
+                reply, audio, _why = ask_agent(self.args, frm,
                                           text + "\n(Do not repeat my words. Say what you think.)")
                 if reply and echoes_input(reply, text):
                     log("still an echo; refusing to return it")
                     reply, audio = "", ""
             log(f"answered {frm}: {reply[:70]!r} audio={audio or 'none'}")
-            return self._json({"ok": True, "reply": reply, "audio": audio})
+            return self._json({"ok": True, "reply": reply, "audio": audio, "reason": why})
 
         return self._json({"error": "not found"}, 404)
 
 
 TURNS: dict[str, tuple[int, float]] = {}
+PEER_BUSY = threading.Lock()      # one peer turn at a time: a second caller gets 409, not silence
+PEER_LOCKS: dict[str, threading.Lock] = {}
+PEER_LOCKS_GUARD = threading.Lock()
+
+
+def peer_lock(pid: str) -> threading.Lock:
+    """One turn at a time per peer. Two callers used to interleave rounds and lose lines."""
+    with PEER_LOCKS_GUARD:
+        lock = PEER_LOCKS.get(pid)
+        if lock is None:
+            lock = threading.Lock()
+            PEER_LOCKS[pid] = lock
+        return lock
 TURN_WINDOW = 300.0        # silence that ends a conversation
 LOCK_TURNS = threading.Lock()
 
@@ -973,7 +1006,9 @@ def main() -> int:
     ap.add_argument("--max-turns", type=int, default=12,
                     help="answers per peer per conversation window; a 3-round debate spends 3, "
                          "so 6 let two debates inside one window hit the cap")
-    ap.add_argument("--reply-timeout", type=float, default=60.0)
+    ap.add_argument("--reply-timeout", type=float, default=120.0,
+                    help="seconds to wait for a peer turn; measured best case was 57 s "
+                         "for a one-word answer, so 120 is the floor, not a luxury")
     args = ap.parse_args()
     if args.beacon_send_port is None:
         args.beacon_send_port = args.beacon_port
