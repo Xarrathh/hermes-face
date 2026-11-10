@@ -66,3 +66,13 @@ genuinely `speaking` a peer line was posted. The post returned **11.3 s** later,
 the turn went idle — the answer finished first, then the peer line took the face. Under 45 s
 the wait is polite; past 45 s the line wins, because an answer that never ends must not lock
 out the room.
+
+## Pairing a new face without copying a file
+
+    python3 peering/face_pair.py mint            # on any one face: prints 6 groups
+    python3 peering/face_pair.py join <code>     # on the new face: writes peer.key, 0600
+
+Minting REPLACES the key, so every other box re-joins the new code. The key is 128 bits of
+randomness in base32; the grouping is cosmetic and `join` accepts any case without dashes.
+This is the path for a fresh install: no file moves, nothing is published, and the secret is
+read off one screen and typed once.
