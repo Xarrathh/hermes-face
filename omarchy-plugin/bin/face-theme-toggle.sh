@@ -5,7 +5,10 @@
 # the face reads; this just toggles that flag and reports the new state in the bar log.
 set -u
 LOG="$HOME/.cache/hermes-face-bar.log"
-FLAG="$HOME/.local/share/hermes-face/theme-sync-off"
+FACE_DIR="${HERMES_FACE_PREFIX:-$HOME/.local/share/hermes-face}"
+# The prefix is configurable everywhere else; hardcoding it here meant a custom prefix
+# flipped a flag the bridge never reads.
+FLAG="$FACE_DIR/theme-sync-off"
 say() { printf '%s %s\n' "$(date '+%F %T')" "$*" >>"$LOG"; }
 
 mkdir -p "$(dirname "$FLAG")" 2>/dev/null || true

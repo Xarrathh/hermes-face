@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Stop whatever the face is saying or doing, from a global keybinding.
-# Safe to press when nothing is running, and it carries the prefix token: loopback alone is no
-# longer enough to talk to the bridge.
+# Safe to press when nothing is running. No secret on the command line: the bridge authorises
+# the connecting socket by its owning uid, so loopback plus a matching uid is the gate.
 set -u
 PORT="${HERMES_FACE_PORT:-9120}"
 LOG="$HOME/.cache/hermes-face-bar.log"

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Open the Hermes face menu from the bar glyph.
 #
-# This exists as a script rather than an inline command because the bar's run() hands its argument
-# to the shell as a single program name — "omarchy menu summon hermes" sent that way silently does
-# nothing, which is exactly how right click came to look broken.
+# A script rather than an inline command: the menu route must be summonable from a terminal
+# and from a keybinding as well as from a click, and a wrapper is the only form all three can
+# share. (`bar.run()` does hand its string to a shell, but the click handler itself is the
+# fragile part, so keep the action testable without a mouse.)
 set -u
 # summon, not toggle: a click that seemed to do nothing usually closed a menu that was already
 # open, and the one thing this must never do is leave him with no menu at all.

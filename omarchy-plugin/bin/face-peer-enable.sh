@@ -5,7 +5,7 @@
 # user run to say yes to it, and it is the only thing that opens the port.
 #
 # What it does:
-#   * copies peer.py beside the bridge and writes face-peer.service for this host's own name;
+#   * copies face_peer.py beside the bridge and writes face-peer.service for this host's own name;
 #   * creates the shared peer key (0600) if it does not exist yet — copy that file to the other
 #     face so the two agree;
 #   * prints the firewall rule you need, and applies it only when you pass --firewall.

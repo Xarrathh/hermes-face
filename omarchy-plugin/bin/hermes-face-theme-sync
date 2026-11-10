@@ -5,7 +5,7 @@
 #   off  - your colours are never touched again
 # Colours you set by hand always stick; a theme change is the only thing that moves them.
 set -u
-FLAG="$HOME/.local/share/hermes-face/theme-sync-off"
+FLAG="${HERMES_FACE_PREFIX:-$HOME/.local/share/hermes-face}/theme-sync-off"
 HOOK="$HOME/.config/omarchy/hooks/theme-set.d/hermes-face-theme.hook"
 case "${1:-}" in
   on)

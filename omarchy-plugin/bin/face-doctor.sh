@@ -41,15 +41,38 @@ agent=""
 for cand in "$(command -v hermes 2>/dev/null || true)" "$HOME/.local/bin/hermes" \
             "$HOME/.hermes/bin/hermes" "$HOME/.hermes/hermes-agent/.hermes/bin/hermes" \
             /usr/local/bin/hermes /usr/bin/hermes; do
-  [ -n "$cand" ] && [ -x "$cand" ] && agent="$cand" && break
+  [ -n "$cand" ] && [ -x "$cand" ] && agent="$(readlink -f "$cand" 2>/dev/null || printf '%s' "$cand")" && break
 done
 if [ -n "$agent" ]; then
   pass "agent: $agent"
-  "$agent" chat --help 2>/dev/null | grep -q -- "--query-file" \
-    && pass "agent takes --query-file" \
-    || printf '  note  this agent has no --query-file; the face falls back to the inline prompt\n'
+  if "$agent" chat --help 2>/dev/null | grep -q -- "--query-file"; then
+    pass "agent takes --query-file"
+  else
+    printf '  note  no --query-file: the face refuses a turn rather than putting your words in\n'
+    printf '        the process list. Set HERMES_FACE_ALLOW_INLINE_PROMPT=1 to accept that.\n'
+  fi
 else
   bad "no hermes binary found" "install the Hermes agent, or set HERMES_BIN to its path"
+fi
+
+# SECURITY.md promises the prefix and the files in it are private to this user. A prefix
+# restored from a backup, or created under a different umask, silently is not -- so check it.
+if [ -d "$PREFIX" ]; then
+  pmode=$(stat -c '%a' "$PREFIX" 2>/dev/null || echo '?')
+  if [ "$pmode" = "700" ]; then
+    pass "prefix is private (0700)"
+  else
+    bad "prefix mode is $pmode, not 700" "chmod 700 $PREFIX (the bridge does this on its next start)"
+  fi
+  for f in config.json history.json token; do
+    [ -e "$PREFIX/$f" ] || continue
+    fmode=$(stat -c '%a' "$PREFIX/$f" 2>/dev/null || echo '?')
+    if [ "$fmode" = "600" ]; then
+      pass "$f is private (0600)"
+    else
+      bad "$f mode is $fmode, not 600" "chmod 600 $PREFIX/$f (the bridge does this on its next start)"
+    fi
+  done
 fi
 
 if [ -x "$HOME/.local/bin/hermes-face-kiosk" ]; then

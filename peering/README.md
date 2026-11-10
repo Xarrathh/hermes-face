@@ -10,8 +10,9 @@ Two files and one unit. Everything here was measured on `ProPierre-Work`
   `seq` counter with `/say`, so an arriving peer line cancels an in-flight turn exactly as
   a new spoken command does.
 - `face_peer.py` — the sidecar. UDP beacon on `9998` every 2 s, peer marked gone after 8 s
-  of silence, greeting once per peer per 15 min, `/talk` for user-initiated lines,
-  `--max-turns` cap (default 6) per peer.
+  of silence, greeting once per peer per 15 min, `/talk` for user-initiated lines (with
+  `rounds=N`, 1–4, for a debate), `--max-turns` per-peer cap (default 12) inside a 300 s
+  window, `--reply-timeout` default 120 s.
 - `face-peer.service.example` — a user unit. Change `--name`, `--id`, and the paths.
 
 ## Install
@@ -31,6 +32,38 @@ Ports, once, as root: `ufw allow from 192.168.10.0/24 to any port 9998 proto udp
 `ufw allow from 192.168.10.0/24 to any port 9910 proto tcp`. On this LAN the two hosts are
 `192.168.10.112` (Pro-Pierre) and `192.168.10.102` (Suzie).
 
+## Trust: automatic by default
+
+Two faces on one network find each other and talk with nothing to configure. Possession of
+the LAN address is the boundary: discovery, greeting and answering are unattended.
+
+`peering.json` still holds a list, and the list fills itself:
+
+- `seen` — every face that has contacted this box, with id, name and time. Nothing to write.
+- `blocked` — ids refused outright (`403 face blocked`). `bin/face-trust.sh block <name>`.
+- `strict: true` — answer only ids in `trusted`.
+- `require_key: true` — demand the shared `peer.key` as well, for a network you do not own.
+
+List changes are accepted from loopback only. The key and the pairing tool (`face_pair.py
+mint` / `join`) remain for the `require_key` case; the default path needs neither.
+
+## Failure behaviour
+
+A partial answer must never look like a finished one:
+
+- `/peer/incoming` returns `{"ok": true, "reply": …, "audio": …, "reason": …}` where `reason`
+  is `ok`, `ok-no-audio` (words survived a speech failure), `timeout`, `error` or
+  `unreachable`.
+- `/talk` returns `lines`, `asked` and `stopped`. `stopped` is empty on a complete exchange
+  and names the cause otherwise (`peer empty`, `peer unreachable: …`, `this face: timeout`).
+- One turn at a time **per peer**: a second caller waits up to 150 s, then gets
+  `409 {"reason": "busy"}`. Different peers are never serialised against each other.
+- `/say` claims the turn under one lock (`_claim_turn`) and answers `409 busy` rather than
+  killing the turn already running. Callers arriving together queue instead of racing for
+  the sequence number, which used to leave orphaned turns.
+- A reply's mp3 is never deleted while it might still be playing: files younger than two
+  minutes survive, and pruning keeps the last three turns.
+
 ## Verify
 
 ```bash
@@ -43,6 +76,17 @@ curl -s -X POST -H 'Content-Type: application/json' \
 
 `/speak` answers `{"ok": true, "seq": N}` immediately; the audio lands in `audio/peer-N.mp3`
 about 7–9 s later (edge-tts) and `/state` flips `thinking -> speaking -> idle`.
+
+`/peers` reports the mode and who has been seen:
+
+```bash
+curl -s -H "X-Peer-Key: $(cat peer.key)" http://127.0.0.1:9910/peers
+# {"me": {...}, "mode": "automatic", "trusted": [], "blocked": [], "seen": [...]}
+```
+
+`/health` stays behind the key when `require_key` is set; on a box with no `peer.key` the
+automatic mode answers it, and `build` in the reply is the hash of the running `face_peer.py`
+so two boxes can tell whether they are testing the same code.
 
 ## Behaviour, as built
 
