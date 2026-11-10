@@ -207,7 +207,12 @@ def echoes_input(reply: str, said: str) -> bool:
 
 
 def ask_agent(args: argparse.Namespace, peer_name: str, text: str) -> tuple[str, str]:
-    """Run a real agent turn so the answer is this face's own, then read it and its audio back."""
+    """Run a turn on this face and return (text, audio_name).
+
+    A speech failure is NOT an answer failure: the bridge sets `error` when edge-tts drops the
+    audio, and the words are already in `reply`. Refusing the text because the voice hiccuped is
+    how a debate round died with a 200 and an empty string -- the most useless possible answer.
+    """
     prompt = (f"{peer_name} (another Hermes face on this LAN) said: {text}\n"
               "Answer them in one short spoken sentence, in your own words. Do not repeat or "
               "paraphrase what they said; state your own position and one reason for it, and "
@@ -229,6 +234,7 @@ def ask_agent(args: argparse.Namespace, peer_name: str, text: str) -> tuple[str,
         return "", ""
     deadline = time.time() + args.reply_timeout
     last_name = ""
+    last_state: dict = {}
     while time.time() < deadline:
         time.sleep(0.5)
         try:
@@ -244,12 +250,17 @@ def ask_agent(args: argparse.Namespace, peer_name: str, text: str) -> tuple[str,
         elif st.get("audio") and str(st["audio"]) != before:
             last_name = str(st["audio"]).rsplit("/", 1)[-1]
         if st.get("error"):
-            # A failed turn writes its complaint into `reply`, and speaking it aloud turns a
-            # broken bridge into the face answering with an error message. Nothing is relayed.
-            log(f"turn error on this side: {st['error'][:140]}")
+            said = str(st.get("reply") or "").strip()
+            log(f"turn error on this side: {st['error'][:140]} | reply_text={said[:60]!r}")
+            if said and not said.startswith("The agent did not return"):
+                # Keep the words, drop the audio: the other face can still argue.
+                return said, ""
             return "", ""
+        last_state = st
         if st.get("agent") == "idle" and (st.get("reply") or "").strip():
             return str(st["reply"]).strip(), last_name
+    log(f"no answer from this face in {args.reply_timeout:.0f}s: agent={last_state.get('agent')!r} "
+        f"error={str(last_state.get('error'))[:80]!r} reply_len={len(str(last_state.get('reply') or ''))}")
     return "", ""
 
 
