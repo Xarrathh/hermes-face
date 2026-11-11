@@ -96,9 +96,16 @@
   }
 
   function resize() {
-    DPR = Math.min(2, window.devicePixelRatio || 1);
+    // The frame is fill-bound: measured on a software rasteriser at 1280x577 CSS, the draw
+    // cost fits ~12 ms fixed + ~9.6 ms per megapixel, so 2x on a 2 MPx window asked for 3 MPx
+    // and 40 ms against a 33.3 ms budget. The budget is therefore pixels, not devicePixelRatio;
+    // the face is soft and holographic, so trading a little sharpness on a dense screen is the
+    // cheap way to stay inside the budget on a slow machine. 1x screens are untouched.
+    const PIXEL_BUDGET = 1.6e6;
     VW = Math.max(360, window.innerWidth);
     VH = Math.max(280, window.innerHeight);
+    DPR = Math.max(0.75, Math.min(Math.min(2, window.devicePixelRatio || 1),
+                                  Math.sqrt(PIXEL_BUDGET / (VW * VH))));
     cv.width = Math.round(VW * DPR);
     cv.height = Math.round(VH * DPR);
     cv.style.width = VW + 'px';
@@ -1977,6 +1984,9 @@
 
     const drawMs = performance.now() - drawT0;
     S.drawMs = S.drawMs ? S.drawMs * 0.88 + drawMs * 0.12 : drawMs;
+    // A frame that got all the way here did not throw, so the last failure is history -- it
+    // used to stay in __frameErr forever and read as a live fault in debug().
+    if (window.__frameErr) window.__frameErr = null;
 
     // fps
     fpsAcc += dt; fpsN++;
@@ -1989,7 +1999,28 @@
   /* ---------------------------------------------------------------- api */
   function setParams(next) {
     // next is the tuned look; P is that look plus whatever mood is on top, rebuilt here and
-    // every frame so a slider and a mood never fight over the same key
+    // every frame so a slider and a mood never fight over the same key.
+    // A non-finite number is not a look. It reaches the canvas maths and abandons the frame,
+    // and *where* it dies depends on which key it was: one bad key (headWidth, smile, jawWidth,
+    // chinWidth...) collapses a canvas and throws InvalidStateError out of drawSculpt's
+    // drawImage, while NaN across every key leaves layout handing back undefined and throws
+    // "Cannot read properties of undefined (reading 'line')" in frame(). Either way the painting
+    // freezes half-done, so the guard belongs at this boundary, not in any one draw function.
+    if (next && typeof next === 'object') {
+      const clean = {};
+      for (const k of Object.keys(next)) {
+        const v = next[k];
+        if (typeof v === 'number' && !isFinite(v)) continue;
+        // Filtering non-finite values is half the guard: a *finite* number still reaches the
+        // geometry maths, and `earSize: -1e6` threw IndexSizeError (negative ellipse radius)
+        // in drawEars and froze the frame. RANGE is the schema's own [min, max], built at
+        // boot, so every writer -- /params polling, the editor, a console poke -- lands on a
+        // value the sliders could have produced.
+        const r = RANGE[k];
+        clean[k] = (typeof v === 'number' && r) ? Math.min(r[1], Math.max(r[0], v)) : v;
+      }
+      next = clean;
+    }
     BASE = Object.assign({}, BASE, next);
     CELLS.dirty = true;
     P = moodParams();
