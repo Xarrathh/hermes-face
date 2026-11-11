@@ -724,7 +724,11 @@ def prune_audio(keep_seq: int | None) -> None:
     for f in AUDIO.glob("*.mp3"):
         m = re.match(r"reply-(\d+)", f.name)
         try:
-            if m and (keep_seq is None or int(m.group(1)) < keep_seq):
+            # Keep the live turn and the two before it, and never delete anything younger than
+            # two minutes. Deleting the previous reply the instant a new turn starts is how a
+            # face shows but says nothing: the page had the path and the file was already gone.
+            fresh = time.time() - f.stat().st_mtime < 120
+            if m and not fresh and (keep_seq is None or int(m.group(1)) < keep_seq - 2):
                 f.unlink(missing_ok=True)
             elif not m and time.time() - f.stat().st_mtime > 86400:
                 f.unlink(missing_ok=True)      # voice-test and boot leftovers
@@ -963,6 +967,27 @@ def handle_command(text: str) -> str:
             STATE.update(agent="idle", audio=None)
         return "Stopped."
     return f"Unknown command {cmd}. Try slash help."
+
+
+def _claim_turn(timeout: float = 180.0) -> int | None:
+    """Reserve the face for one turn, or give up and say so.
+
+    The old sequence -- wait for idle, then set thinking -- was two steps with a gap, so three
+    callers arriving together all saw `idle`, all incremented `seq`, and two of the three turns
+    were killed by the third's sequence number. The face answered once and dropped two questions
+    with a 200. Check and claim happen under the same lock here, which makes "who speaks next"
+    a fact rather than a race.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        with LOCK:
+            if str(STATE.get("agent") or "idle") == "idle":
+                STATE["seq"] += 1
+                seq = STATE["seq"]
+                STATE.update(agent="thinking", reply="", error="", audio=None, audio_parts=[])
+                return seq
+        time.sleep(0.2)
+    return None
 
 
 def _wait_idle(seconds: float = 45.0) -> bool:
@@ -1245,9 +1270,9 @@ def run_turn(text: str, seq: int, origin: str = "local") -> None:
     out = AUDIO / f"reply-{seq}.mp3"
     try:
         synth(speech, out)
-        for old in AUDIO.glob("reply-*.mp3"):
-            if old != out:
-                old.unlink(missing_ok=True)
+        # The file used to be deleted the instant the next reply was ready -- sometimes while the
+        # page was still fetching or playing it, which is a face that shows and says nothing. Age
+        # them out instead: prune_audio keeps anything younger than two minutes.
         if not set_if_current(seq, audio=f"/audio/{out.name}", audio_parts=[f"/audio/{out.name}"]):
             return
         _auto_idle_after(out.stat().st_size / 6000.0 + 4.0, seq)
@@ -1520,14 +1545,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": "empty"}, 400)
             if len(text) > MAX_SPOKEN:
                 return self._json({"error": f"text too long (limit {MAX_SPOKEN} characters)"}, 413)
-            # The new command always wins: drop whatever is running instead of
-            # refusing the turn. The killed run notices its seq moved and stays quiet.
-            _kill_turn()
+            # A second conversation used to kill the first: the arriving turn took the bridge and
+            # the older one died mid-sentence, which the peer read as an empty answer. Wait for the
+            # live turn instead, and refuse honestly when it outlasts the ceiling.
+            seq = _claim_turn(180.0)
+            if seq is None:
+                with LOCK:
+                    busy = STATE.get("agent")
+                return self._json({"error": "busy", "agent": busy,
+                                   "hint": "a turn is still running; retry when it is idle"}, 409)
             with LOCK:
-                STATE["seq"] += 1
-                seq = STATE["seq"]
-                STATE.update(agent="thinking", mood="curious", heard=text.strip(),
-                             reply="", error="", audio=None, audio_parts=[])
+                STATE.update(mood="curious", heard=text.strip())
             prune_audio(seq)
             origin = str(payload.get("origin") or "local")
             threading.Thread(target=run_turn, args=(text, seq, origin), daemon=True).start()
