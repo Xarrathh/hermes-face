@@ -745,7 +745,7 @@ def prune_audio(keep_seq: int | None) -> None:
             pass
 
 
-def _stream_turn(proc, seq: int, timeout: float = 240.0) -> tuple[str, str, str, int]:
+def _stream_turn(proc, seq: int, prompt_text: str, timeout: float = 240.0) -> tuple[str, str, str, int]:
     """Read a `--format stream-json` turn as it arrives, speaking sentence groups early.
 
     Returns (raw stdout, raw stderr, unturned text, next chunk index). The caller keeps its
@@ -753,6 +753,17 @@ def _stream_turn(proc, seq: int, timeout: float = 240.0) -> tuple[str, str, str,
     """
     out_lines: list[str] = []
     err_lines: list[str] = []
+
+    # Feed the prompt over stdin and close it so hermes chat knows the input is complete.
+    def feed_stdin() -> None:
+        try:
+            proc.stdin.write(prompt_text)
+            proc.stdin.close()
+        except (BrokenPipeError, OSError, ValueError):
+            pass
+
+    stdin_thread = threading.Thread(target=feed_stdin, daemon=True)
+    stdin_thread.start()
 
     def drain_err() -> None:
         try:
@@ -799,6 +810,7 @@ def _stream_turn(proc, seq: int, timeout: float = 240.0) -> tuple[str, str, str,
         except subprocess.TimeoutExpired:
             _kill_turn()
     finally:
+        stdin_thread.join(timeout=2)
         err_thread.join(timeout=2)
     return "".join(out_lines), "".join(err_lines), pending.strip(), index
 
@@ -985,6 +997,7 @@ def _claim_turn(timeout: float = 180.0) -> int | None:
                 STATE["seq"] += 1
                 seq = STATE["seq"]
                 STATE.update(agent="thinking", reply="", error="", audio=None, audio_parts=[])
+                STATE["since"] = time.time()
                 return seq
         time.sleep(0.2)
     return None
@@ -1126,9 +1139,9 @@ def run_turn(text: str, seq: int, origin: str = "local") -> None:
             print("hermes-face: this Hermes CLI has no --query-file, so the spoken words appear in "
                   "the process list; update Hermes to stop that", flush=True)
         if caps["stream_json"]:
-            cmd += ["--format", "stream-json", "--source", "tool"]
+            cmd += ["--format", "stream-json", "--safe-mode"]
         else:
-            cmd += ["-Q", "--source", "tool"]
+            cmd += ["-Q", "--safe-mode"]
         if RE_SID.fullmatch(sid or "") and sid != FACE_SESSION:
             cmd += ["--resume", sid]
         elif caps["create_if_missing"]:
@@ -1148,13 +1161,6 @@ def run_turn(text: str, seq: int, origin: str = "local") -> None:
                                         text=True,
                                         stdin=subprocess.PIPE if use_stdin else subprocess.DEVNULL,
                                         start_new_session=True)
-                if use_stdin:
-                    # The prompt goes down the pipe now, before anything waits on stdout.
-                    try:
-                        proc.stdin.write(prompt_text)
-                        proc.stdin.close()
-                    except (BrokenPipeError, OSError):
-                        pass
             except Exception as exc:               # noqa: BLE001
                 # The prompt file holds his spoken words: do not leave it behind when the
                 # agent cannot even be spawned.
@@ -1167,9 +1173,17 @@ def run_turn(text: str, seq: int, origin: str = "local") -> None:
                 RUN["seq"] = seq
             try:
                 if caps["stream_json"]:
-                    out, err, streamed_left, chunk_index = _stream_turn(proc, seq)
+                    out, err, streamed_left, chunk_index = _stream_turn(proc, seq, prompt_text)
                 else:
-                    out, err = proc.communicate(timeout=240)
+                    # Pass the prompt directly to communicate(); writing/closing stdin first
+                    # and then calling communicate() races a fast-exiting hermes chat and
+                    # crashes with "I/O operation on closed file".
+                    out, err = proc.communicate(input=prompt_text if use_stdin else None,
+                                                timeout=240)
+            except (ValueError, OSError) as exc:
+                # stdin pipe closed before communicate() could use it; treat as agent error.
+                out, err = "", str(exc)
+                reply = "The agent pipe closed early."
             except subprocess.TimeoutExpired:
                 _kill_turn()
                 out, err = "", ""
@@ -1323,7 +1337,11 @@ class Handler(BaseHTTPRequestHandler):
                              "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
         self.end_headers()
         if not self.head_only:
-            self.wfile.write(body)
+            try:
+                self.wfile.write(body)
+            except BrokenPipeError:
+                # Client closed the connection before reading the body; nothing to recover.
+                pass
 
     def do_HEAD(self) -> None:                     # noqa: N802
         """Same routing and headers as GET, body suppressed.
@@ -1339,7 +1357,10 @@ class Handler(BaseHTTPRequestHandler):
             self.head_only = False
 
     def _json(self, obj, code: int = 200) -> None:
-        self._send(code, json.dumps(obj).encode(), "application/json")
+        try:
+            self._send(code, json.dumps(obj).encode(), "application/json")
+        except BrokenPipeError:
+            pass
 
     def _authorised(self) -> bool:
         """Is this request from the desktop user's own connection?
