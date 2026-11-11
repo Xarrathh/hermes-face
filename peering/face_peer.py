@@ -590,9 +590,17 @@ def listen_loop(args: argparse.Namespace, book: Book, stop: threading.Event) -> 
         fresh, peer = book.seen(pid, info)
         if fresh:
             log(f"peer present: {peer.get('name')} at {addr[0]}:{peer.get('port')} build={peer.get('build') or '?'}")
-            if peer.get("build") and peer["build"] != BUILD:
-                log(f"BUILD MISMATCH: {peer.get('name')} runs {peer['build']}, this face runs {BUILD}"
-                    " -- one of them is stale, and a test between mismatched builds proves nothing")
+            build = peer.get("build")
+            if build != BUILD:
+                # An absent build is not a pass: a sidecar older than the beacon advertises
+                # nothing, and the old `if peer.get("build") and ...` let exactly that peer skip
+                # the check in silence. Warn for both, and say which kind of doubt it is.
+                if not build:
+                    log(f"BUILD UNVERIFIED: {peer.get('name')} advertises no build, this face runs {BUILD}"
+                        " -- its sidecar predates the build beacon, so a test between them proves nothing")
+                else:
+                    log(f"BUILD MISMATCH: {peer.get('name')} runs {build}, this face runs {BUILD}"
+                        " -- one of them is stale, and a test between mismatched builds proves nothing")
             threading.Thread(target=greet, args=(book, args, pid, peer), daemon=True).start()
     sock.close()
 
